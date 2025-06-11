@@ -7,7 +7,7 @@ export class UsersController {
   getUserHello(data: { name?: string }) {
     const name = data?.name || 'World';
     return {
-      message: `Hello ${name} from User Microservice!`,
+      message: `Hello ${name} from User Microservice reloaded`,
       service: 'user-service',
       timestamp: new Date().toISOString(),
     };

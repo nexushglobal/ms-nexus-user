@@ -1,0 +1,39 @@
+FROM node:24-alpine AS base
+
+RUN corepack enable pnpm
+
+FROM base AS development
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml ./
+COPY .npmrc* ./
+
+RUN pnpm install --frozen-lockfile
+
+COPY nest-cli.json tsconfig*.json ./
+
+
+EXPOSE $PORT
+
+CMD ["pnpm", "run", "start:dev"]
+
+FROM base AS production
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml ./
+COPY .npmrc* ./
+
+RUN pnpm install --frozen-lockfile --prod
+
+COPY . .
+RUN pnpm run build
+
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nestjs
+
+RUN chown -R nestjs:nodejs /app
+USER nestjs
+
+EXPOSE $PORT
+
+CMD ["node", "dist/main"]
