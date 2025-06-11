@@ -11,7 +11,6 @@ const envsSchema = joi
   .object({
     NATS_SERVERS: joi
       .string()
-      .uri()
       .default('nats://localhost:4222')
       .description('NATS server URI'),
     PORT: joi.number().default(3000),
