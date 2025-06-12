@@ -1,24 +1,24 @@
 import { Controller } from '@nestjs/common';
-import { MessagePattern } from '@nestjs/microservices';
-
+import { MessagePattern, Payload } from '@nestjs/microservices';
+import { RegisterDto } from './dto/create-user.dto';
+import { UsersService } from './users.service';
+interface RegisterResponse {
+  user: {
+    id: string;
+    email: string;
+    referralCode: string;
+    firstName: string;
+    lastName: string;
+  };
+}
 @Controller()
 export class UsersController {
-  @MessagePattern({ cmd: 'user.hello' })
-  getUserHello(data: { name?: string }) {
-    const name = data?.name || 'World';
-    return {
-      message: `Hello ${name} from User Microservice reloaded`,
-      service: 'user-service',
-      timestamp: new Date().toISOString(),
-    };
-  }
+  constructor(private readonly usersService: UsersService) {}
 
-  @MessagePattern({ cmd: 'user.health' })
-  getHealth() {
-    return {
-      status: 'OK',
-      service: 'user-service',
-      timestamp: new Date().toISOString(),
-    };
+  @MessagePattern({ cmd: 'user.register' })
+  async register(
+    @Payload() registerDto: RegisterDto,
+  ): Promise<RegisterResponse> {
+    return await this.usersService.register(registerDto);
   }
 }
