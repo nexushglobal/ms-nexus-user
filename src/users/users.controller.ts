@@ -21,4 +21,19 @@ export class UsersController {
   ): Promise<RegisterResponse> {
     return await this.usersService.register(registerDto);
   }
+
+  @MessagePattern({ cmd: 'user.findByEmail' })
+  async findByEmail(@Payload() data: { email: string }) {
+    const user = await this.usersService.findByEmail(data.email);
+    if (!user) {
+      return {
+        success: false,
+        message: 'Usuario no encontrado',
+      };
+    }
+    return {
+      success: true,
+      user: user.toJSON(),
+    };
+  }
 }
