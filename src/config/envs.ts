@@ -5,6 +5,7 @@ interface EnvVars {
   PORT: number;
   NODE_ENV: 'development' | 'production' | 'test';
   NATS_SERVERS: string;
+  MONGODB_URI: string;
 }
 
 const envsSchema = joi
@@ -18,6 +19,7 @@ const envsSchema = joi
       .string()
       .valid('development', 'production', 'test')
       .default('development'),
+    MONGODB_URI: joi.string().required().description('MongoDB connection URI'),
   })
   .unknown(true);
 
