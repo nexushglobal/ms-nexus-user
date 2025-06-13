@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
@@ -18,6 +18,7 @@ import {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Role.name) private roleModel: Model<RoleDocument>,
@@ -198,7 +199,6 @@ export class UsersService {
 
     const user = await this.userModel
       .findById(id)
-      .select('+password')
       .populate({
         path: 'role',
         select: 'id code name isActive',
@@ -212,32 +212,37 @@ export class UsersService {
     return {
       id: (user._id as Types.ObjectId).toString(),
       email: user.email,
-      password: user.password,
       isActive: user.isActive,
-      // role:
-      //   typeof user.role === 'object' &&
-      //   user.role !== null &&
-      //   'code' in user.role
-      //     ? {
-      //         id: user.role._id.toString(),
-      //         code: user.role.code,
-      //         name: user.role.name,
-      //         isActive: user.role.isActive,
-      //       }
-      //     : {
-      //         id: user.role?.toString?.() ?? '',
-      //         code: '',
-      //         name: '',
-      //         isActive: false,
-      //       },
-      // personalInfo: user.personalInfo
-      //   ? {
-      //       firstName: user.personalInfo.firstName,
-      //       lastName: user.personalInfo.lastName,
-      //     }
-      //   : undefined,
-      // photo: user.photo,
-      // nickname: user.nickname,
+      role: {
+        id: (user.role as any)._id.toString(),
+        code: (user.role as any).code,
+        name: (user.role as any).name,
+        isActive: (user.role as any).isActive,
+      },
+      personalInfo: user.personalInfo
+        ? {
+            firstName: user.personalInfo.firstName,
+            lastName: user.personalInfo.lastName,
+            documentType: user.personalInfo.documentType,
+            documentNumber: user.personalInfo.documentNumber,
+            gender: user.personalInfo.gender,
+            birthdate: user.personalInfo.birthdate,
+          }
+        : undefined,
+      contactInfo: user.contactInfo
+        ? {
+            phone: user.contactInfo.phone,
+            address: user.contactInfo.address,
+            postalCode: user.contactInfo.postalCode,
+            country: user.contactInfo.country,
+          }
+        : undefined,
+      photo: user.photo,
+      nickname: user.nickname,
+      referralCode: user.referralCode,
+      lastLoginAt: user.lastLoginAt,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
     };
   }
 
@@ -256,22 +261,14 @@ export class UsersService {
     return {
       id: (user._id as Types.ObjectId).toString(),
       email: user.email,
-      // password: user.password,
-      // isActive: user.isActive,
-      // role: {
-      //   id: user.role._id.toString(),
-      //   code: user.role.code,
-      //   name: user.role.name,
-      //   isActive: user.role.isActive,
-      // },
-      // personalInfo: user.personalInfo
-      //   ? {
-      //       firstName: user.personalInfo.firstName,
-      //       lastName: user.personalInfo.lastName,
-      //     }
-      //   : undefined,
-      // photo: user.photo,
-      // nickname: user.nickname,
+      password: user.password,
+      isActive: user.isActive,
+      role: {
+        id: (user.role as any)._id.toString(),
+        code: (user.role as any).code,
+        name: (user.role as any).name,
+        isActive: (user.role as any).isActive,
+      },
     };
   }
 
@@ -315,14 +312,46 @@ export class UsersService {
   // Método para obtener las vistas por rol
 
   // Método para actualizar la última conexión del usuario
-  async updateLastLoginAt(userId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(userId)) {
-      return;
-    }
+  async updateLastLoginAt(userId: string) {
+    try {
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return;
+      }
 
-    await this.userModel
-      .findByIdAndUpdate(userId, { lastLoginAt: new Date() }, { new: true })
-      .exec();
+      const result = await this.userModel
+        .findByIdAndUpdate(
+          userId,
+          {
+            lastLoginAt: new Date(),
+            // Si es la primera vez que inicia sesión, también podemos actualizar otros campos
+            $setOnInsert: {
+              // Campos que solo se establecen si no existen
+            },
+          },
+          {
+            new: true,
+            upsert: false, // No crear si no existe
+            runValidators: true, // Ejecutar validadores del schema
+          },
+        )
+        .exec();
+
+      if (!result) {
+        this.logger.warn(
+          `❌ Usuario no encontrado para actualizar lastLoginAt: ${userId}`,
+        );
+        return false;
+      }
+
+      this.logger.log(`✅ LastLoginAt actualizado para usuario: ${userId}`);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error actualizando lastLoginAt para usuario ${userId}:`,
+        error.message,
+      );
+    }
   }
 
   // Método para validar si un usuario existe y está activo

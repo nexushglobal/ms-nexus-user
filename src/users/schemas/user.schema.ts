@@ -220,6 +220,7 @@ export class User {
 
   @Prop({
     type: Date,
+    default: null,
   })
   lastLoginAt?: Date;
 
