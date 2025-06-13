@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Role, RoleDocument } from '../roles/schemas/roles.schema';
-import { View, ViewDocument } from '../views/schemas/views.schema';
+import { Role, RoleDocument } from '../../roles/schemas/roles.schema';
+import { View, ViewDocument } from '../../views/schemas/views.schema';
 import {
   MigrationResult,
   RoleMigrationData,
   RoleViewRelation,
   ViewMigrationData,
-} from './interfaces/roles-view.interfaces';
+} from '../interfaces/roles-view.interfaces';
 
 @Injectable()
 export class MigrationService {

@@ -4,8 +4,8 @@ import {
   RoleMigrationData,
   RoleViewRelation,
   ViewMigrationData,
-} from './interfaces/roles-view.interfaces';
-import { MigrationService } from './migration.service';
+} from '../interfaces/roles-view.interfaces';
+import { MigrationService } from '../services/migration.service';
 
 interface MigrationPayload {
   roles: RoleMigrationData[];

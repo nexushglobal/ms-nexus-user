@@ -2,8 +2,11 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Role, RoleSchema } from '../roles/schemas/roles.schema';
 import { View, ViewSchema } from '../views/schemas/views.schema';
-import { MigrationController } from './migration.controller';
-import { MigrationService } from './migration.service';
+import { MigrationController } from './controllers/migration.controller';
+import { MigrationService } from './services/migration.service';
+import { UserMigrationService } from './services/user-migration.service';
+import { UserMigrationController } from './controllers/user-migration.controller';
+import { User, UserSchema } from 'src/users/schemas/user.schema';
 
 @Module({
   imports: [
@@ -16,10 +19,14 @@ import { MigrationService } from './migration.service';
         name: View.name,
         schema: ViewSchema,
       },
+      {
+        name: User.name,
+        schema: UserSchema,
+      },
     ]),
   ],
-  controllers: [MigrationController],
-  providers: [MigrationService],
-  exports: [MigrationService],
+  controllers: [MigrationController, UserMigrationController],
+  providers: [MigrationService, UserMigrationService],
+  exports: [MigrationService, UserMigrationService],
 })
 export class MigrationModule {}
