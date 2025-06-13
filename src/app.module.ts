@@ -4,6 +4,7 @@ import { envs } from './config/envs';
 import { ViewsModule } from './views/views.module';
 import { RolesModule } from './roles/roles.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { MigrationModule } from './migration/migration.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { MongooseModule } from '@nestjs/mongoose';
     UsersModule,
     ViewsModule,
     RolesModule,
+    MigrationModule,
   ],
 })
 export class AppModule {}
