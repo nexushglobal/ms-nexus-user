@@ -43,8 +43,7 @@ export class Role {
 
 export const RoleSchema = SchemaFactory.createForClass(Role);
 
-// Índices
-RoleSchema.index({ code: 1 });
+// Índices - Eliminamos el duplicado para 'code'
 RoleSchema.index({ isActive: 1 });
 RoleSchema.index({ views: 1 });
 

@@ -41,15 +41,14 @@ export class PasswordResetToken {
 export const PasswordResetTokenSchema =
   SchemaFactory.createForClass(PasswordResetToken);
 
-// Índices
-PasswordResetTokenSchema.index({ token: 1 });
+// Índices - Eliminamos duplicados
 PasswordResetTokenSchema.index({ user: 1 });
-PasswordResetTokenSchema.index({ expiresAt: 1 });
 PasswordResetTokenSchema.index({ isUsed: 1 });
 PasswordResetTokenSchema.index({ token: 1, isUsed: 1 });
 
 // Índice TTL para eliminar automáticamente tokens expirados después de 48 horas
+// Este reemplaza el índice simple de expiresAt
 PasswordResetTokenSchema.index(
   { expiresAt: 1 },
-  { expireAfterSeconds: 172800 },
-); // 48 horas
+  { expireAfterSeconds: 172800 }, // 48 horas
+);

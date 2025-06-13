@@ -89,8 +89,7 @@ export class View {
 
 export const ViewSchema = SchemaFactory.createForClass(View);
 
-// Índices
-ViewSchema.index({ code: 1 });
+// Índices - Eliminamos el duplicado para 'code'
 ViewSchema.index({ parent: 1 });
 ViewSchema.index({ isActive: 1 });
 ViewSchema.index({ order: 1 });

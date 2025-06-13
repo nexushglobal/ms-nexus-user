@@ -275,8 +275,7 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-UserSchema.index({ email: 1 });
-UserSchema.index({ referralCode: 1 });
+// Índices - Eliminamos los duplicados y organizamos mejor
 UserSchema.index({ referrerCode: 1 });
 UserSchema.index({ parent: 1 });
 UserSchema.index({ leftChild: 1 });
@@ -284,18 +283,22 @@ UserSchema.index({ rightChild: 1 });
 UserSchema.index({ position: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ role: 1 });
-UserSchema.index({
-  'personalInfo.documentType': 1,
-  'personalInfo.documentNumber': 1,
-});
 UserSchema.index({ 'contactInfo.phone': 1 });
 UserSchema.index({ 'contactInfo.country': 1 });
 UserSchema.index({ 'billingInfo.ruc': 1 });
 
+// Índices compuestos
 UserSchema.index({ parent: 1, position: 1 });
 UserSchema.index({ isActive: 1, role: 1 });
 UserSchema.index({ referrerCode: 1, isActive: 1 });
 
+// Índice único compuesto para documento (solo uno, eliminamos el duplicado)
+UserSchema.index(
+  { 'personalInfo.documentType': 1, 'personalInfo.documentNumber': 1 },
+  { unique: true },
+);
+
+// Virtuals
 UserSchema.virtual('fullName').get(function () {
   return `${this.personalInfo.firstName} ${this.personalInfo.lastName}`;
 });
@@ -316,6 +319,7 @@ UserSchema.virtual('isRoot').get(function () {
   return !this.parent;
 });
 
+// Middleware pre-save
 UserSchema.pre('save', function (next) {
   if (this.referralCode) {
     this.referralCode = this.referralCode.toUpperCase();
@@ -331,13 +335,9 @@ UserSchema.pre('save', function (next) {
   next();
 });
 
+// Método toJSON para excluir password
 UserSchema.methods.toJSON = function (): Record<string, unknown> {
   const obj: Record<string, unknown> = this.toObject();
   delete obj.password;
   return obj;
 };
-
-UserSchema.index(
-  { 'personalInfo.documentType': 1, 'personalInfo.documentNumber': 1 },
-  { unique: true },
-);
