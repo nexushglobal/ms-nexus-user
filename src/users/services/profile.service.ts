@@ -107,28 +107,41 @@ export class ProfileService {
   }
 
   async updatePhoto(userId: string, dto: UpdatePhotoDto) {
-    const existingUser = await this.validateUserAndGet(userId);
+    try {
+      console.log('Actualizando foto de perfil para el usuario:', userId);
+      const existingUser = await this.validateUserAndGet(userId);
+      console.log('Usuario existente encontrado:', existingUser);
 
-    const { oldPhotoKey, shouldDeleteOldPhoto } =
-      this.analyzeExistingPhoto(existingUser);
+      const { oldPhotoKey, shouldDeleteOldPhoto } =
+        this.analyzeExistingPhoto(existingUser);
+      console.log('Foto existente analizada:', {
+        oldPhotoKey,
+        shouldDeleteOldPhoto,
+      });
+      const uploadResult = await this.uploadPhotoToS3(dto);
+      console.log('Foto subida a S3:', uploadResult);
 
-    const uploadResult = await this.uploadPhotoToS3(dto);
+      const updatedUser = await this.updateUserById(userId, {
+        photo: uploadResult.url,
+        photoKey: uploadResult.key,
+      });
+      console.log('Usuario actualizado con nueva foto:', updatedUser);
 
-    const updatedUser = await this.updateUserById(userId, {
-      photo: uploadResult.url,
-      photoKey: uploadResult.key,
-    });
+      // Eliminar foto anterior si es necesario
+      if (shouldDeleteOldPhoto && oldPhotoKey) {
+        console.log('Eliminando foto anterior de S3:', oldPhotoKey);
+        await this.deleteOldPhoto(oldPhotoKey);
+      }
 
-    // Eliminar foto anterior si es necesario
-    if (shouldDeleteOldPhoto && oldPhotoKey) {
-      await this.deleteOldPhoto(oldPhotoKey);
+      return {
+        photo: updatedUser.photo,
+        photoKey: updatedUser.photoKey,
+        updatedAt: updatedUser.updatedAt,
+      };
+    } catch (error) {
+      console.error('Error actualizando foto de perfil:', error);
+      this.handleError(error, 'Error actualizando foto de perfil');
     }
-
-    return {
-      photo: updatedUser.photo,
-      photoKey: updatedUser.photoKey,
-      updatedAt: updatedUser.updatedAt,
-    };
   }
 
   // ========== MÉTODOS PRIVADOS DE UTILIDAD ==========
