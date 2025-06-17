@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Role, RoleSchema } from '../roles/schemas/roles.schema';
 import { View, ViewSchema } from '../views/schemas/views.schema';
 import { PasswordController } from './controllers/password.controller';
+import { ProfileController } from './controllers/profile.controller';
 import { UsersController } from './controllers/users.controller';
 import {
   PasswordResetToken,
@@ -11,6 +12,7 @@ import {
 } from './schemas/password-reset-token.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { PasswordResetService } from './services/password-reset.service';
+import { ProfileService } from './services/profile.service';
 import { UsersService } from './services/users.service';
 
 @Module({
@@ -34,8 +36,8 @@ import { UsersService } from './services/users.service';
       },
     ]),
   ],
-  controllers: [UsersController, PasswordController],
-  providers: [UsersService, PasswordResetService],
-  exports: [MongooseModule, UsersService, PasswordResetService],
+  controllers: [UsersController, PasswordController, ProfileController],
+  providers: [UsersService, PasswordResetService, ProfileService],
+  exports: [MongooseModule, UsersService, PasswordResetService, ProfileService],
 })
 export class UsersModule {}
