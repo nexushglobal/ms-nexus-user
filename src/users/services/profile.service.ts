@@ -11,6 +11,12 @@ import { UpdatePhotoDto } from '../dto/update-photo-dto';
 import { UpdatePersonalInfoDto } from '../dto/update-profile-info.dto';
 import { User, UserDocument } from '../schemas/user.schema';
 
+interface ValidationConstraints {
+  email?: { userId: string };
+  nickname?: { userId: string };
+  document?: { userId: string; docType: string; docNumber: string };
+}
+
 @Injectable()
 export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
@@ -22,670 +28,456 @@ export class ProfileService {
 
   async getUserProfile(userId: string) {
     try {
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-
-      const user = await this.userModel
-        .findById(userId)
-        .populate({
+      const user = await this.validateUserAndGet(userId, {
+        populate: {
           path: 'role',
           select: 'id code name isActive',
+        },
+      });
+
+      return this.formatUserProfile(user);
+    } catch (error) {
+      this.handleError(error, 'Error obteniendo perfil de usuario');
+    }
+  }
+
+  async updateContactInfo(userId: string, dto: UpdateContactInfoDto) {
+    const updateData = this.buildUpdateData(dto, 'contactInfo');
+
+    const updatedUser = await this.updateUserById(userId, updateData, {
+      populate: { path: 'role', select: 'id code name isActive' },
+    });
+
+    return {
+      contactInfo: this.extractNestedData(updatedUser, 'contactInfo'),
+      updatedAt: updatedUser.updatedAt,
+    };
+  }
+
+  async updateBillingInfo(userId: string, dto: UpdateBillingInfoDto) {
+    const updateData = this.buildUpdateData(dto, 'billingInfo');
+
+    const updatedUser = await this.updateUserById(userId, updateData);
+
+    return {
+      billingInfo: this.extractNestedData(updatedUser, 'billingInfo'),
+      updatedAt: updatedUser.updatedAt,
+    };
+  }
+
+  async updateBankInfo(userId: string, dto: UpdateBankInfoDto) {
+    const updateData = this.buildUpdateData(dto, 'bankInfo');
+
+    const updatedUser = await this.updateUserById(userId, updateData);
+
+    return {
+      bankInfo: this.extractNestedData(updatedUser, 'bankInfo'),
+      updatedAt: updatedUser.updatedAt,
+    };
+  }
+
+  async updatePersonalInfo(userId: string, dto: UpdatePersonalInfoDto) {
+    // Validar restricciones únicas
+    await this.validateUniqueConstraints(userId, {
+      email: dto.email ? { userId } : undefined,
+      nickname: dto.nickname ? { userId } : undefined,
+      document:
+        dto.documentNumber || dto.documentType
+          ? {
+              userId,
+              docType: dto.documentType || '',
+              docNumber: dto.documentNumber || '',
+            }
+          : undefined,
+    });
+
+    const updateData = this.buildPersonalInfoUpdateData(dto);
+
+    const updatedUser = await this.updateUserById(userId, updateData);
+
+    return {
+      nickname: updatedUser.nickname || null,
+      email: updatedUser.email || null,
+      personalInfo: {
+        documentType: updatedUser.personalInfo?.documentType || null,
+        documentNumber: updatedUser.personalInfo?.documentNumber || null,
+      },
+      updatedAt: updatedUser.updatedAt,
+    };
+  }
+
+  async updatePhoto(userId: string, dto: UpdatePhotoDto) {
+    const existingUser = await this.validateUserAndGet(userId);
+
+    const { oldPhotoKey, shouldDeleteOldPhoto } =
+      this.analyzeExistingPhoto(existingUser);
+
+    const uploadResult = await this.uploadPhotoToS3(dto);
+
+    const updatedUser = await this.updateUserById(userId, {
+      photo: uploadResult.url,
+      photoKey: uploadResult.key,
+    });
+
+    // Eliminar foto anterior si es necesario
+    if (shouldDeleteOldPhoto && oldPhotoKey) {
+      await this.deleteOldPhoto(oldPhotoKey);
+    }
+
+    return {
+      photo: updatedUser.photo,
+      photoKey: updatedUser.photoKey,
+      updatedAt: updatedUser.updatedAt,
+    };
+  }
+
+  // ========== MÉTODOS PRIVADOS DE UTILIDAD ==========
+
+  private validateObjectId(userId: string): void {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new RpcException({
+        status: 400,
+        message: 'ID de usuario inválido',
+      });
+    }
+  }
+
+  private async validateUserAndGet(
+    userId: string,
+    options?: { populate?: string | Record<string, any> },
+  ): Promise<UserDocument> {
+    this.validateObjectId(userId);
+
+    let query = this.userModel.findById(userId);
+
+    if (options?.populate) {
+      query = query.populate(options.populate as string | string[]);
+    }
+
+    const user = await query.exec();
+
+    if (!user) {
+      throw new RpcException({
+        status: 404,
+        message: `Usuario con ID ${userId} no encontrado`,
+      });
+    }
+
+    return user;
+  }
+
+  private async updateUserById(
+    userId: string,
+    updateData: Record<string, any>,
+    options?: { populate?: string | Record<string, any> },
+  ): Promise<UserDocument> {
+    await this.validateUserAndGet(userId);
+
+    if (Object.keys(updateData).length === 0) {
+      throw new RpcException({
+        status: 400,
+        message: 'No se proporcionaron campos para actualizar',
+      });
+    }
+
+    let query = this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true, runValidators: true },
+    );
+
+    if (options?.populate) {
+      query = query.populate(options.populate as string | string[]);
+    }
+
+    const updatedUser = await query.exec();
+
+    if (!updatedUser) {
+      throw new RpcException({
+        status: 404,
+        message: 'Usuario no encontrado',
+      });
+    }
+
+    return updatedUser;
+  }
+
+  private buildUpdateData(
+    dto: Record<string, any>,
+    prefix: string,
+  ): Record<string, any> {
+    const updateData: Record<string, any> = {};
+
+    Object.entries(dto).forEach(([key, value]) => {
+      if (value !== undefined) {
+        updateData[`${prefix}.${key}`] = value;
+      }
+    });
+
+    return updateData;
+  }
+
+  private buildPersonalInfoUpdateData(
+    dto: UpdatePersonalInfoDto,
+  ): Record<string, any> {
+    const updateData: Record<string, any> = {};
+
+    if (dto.nickname !== undefined) {
+      updateData.nickname = dto.nickname;
+    }
+    if (dto.email !== undefined) {
+      updateData.email = dto.email.toLowerCase();
+    }
+    if (dto.documentType !== undefined) {
+      updateData['personalInfo.documentType'] = dto.documentType;
+    }
+    if (dto.documentNumber !== undefined) {
+      updateData['personalInfo.documentNumber'] = dto.documentNumber;
+    }
+
+    return updateData;
+  }
+
+  private extractNestedData(
+    user: UserDocument,
+    field: string,
+  ): Record<string, any> | null {
+    const data = (user as any)[field];
+    if (!data) return null;
+
+    const result: Record<string, any> = {};
+    Object.keys(
+      data.toObject ? (data.toObject() as object) : (data as object),
+    ).forEach((key) => {
+      result[key] = data[key] || null;
+    });
+
+    return result;
+  }
+
+  private async validateUniqueConstraints(
+    userId: string,
+    constraints: ValidationConstraints,
+  ): Promise<void> {
+    const existingUser = await this.validateUserAndGet(userId);
+
+    // Validar email único
+    if (constraints.email) {
+      await this.validateUniqueField(
+        userId,
+        'email',
+        constraints.email.userId,
+        'Ya existe un usuario con este email',
+      );
+    }
+
+    // Validar nickname único
+    if (constraints.nickname) {
+      await this.validateUniqueField(
+        userId,
+        'nickname',
+        constraints.nickname.userId,
+        'Ya existe un usuario con este nickname',
+      );
+    }
+
+    // Validar documento único
+    if (constraints.document) {
+      const { docType, docNumber } = constraints.document;
+      const finalDocType = docType || existingUser.personalInfo.documentType;
+      const finalDocNumber =
+        docNumber || existingUser.personalInfo.documentNumber;
+
+      const existingDocument = await this.userModel
+        .findOne({
+          _id: { $ne: userId },
+          'personalInfo.documentType': finalDocType,
+          'personalInfo.documentNumber': finalDocNumber,
         })
         .exec();
 
-      if (!user) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      return {
-        id: (user._id as Types.ObjectId).toString(),
-        email: user.email,
-        referralCode: user.referralCode,
-        referrerCode: user.referrerCode || null,
-        isActive: user.isActive,
-        nickname: user.nickname || null,
-        photo: user.photo || null,
-        photoKey: user.photoKey || null,
-        lastLoginAt: user.lastLoginAt || null,
-        position: user.position || null,
-        role: {
-          id: (user.role as any)._id.toString(),
-          code: (user.role as any).code,
-          name: (user.role as any).name,
-          isActive: (user.role as any).isActive,
-        },
-        personalInfo: user.personalInfo
-          ? {
-              firstName: user.personalInfo.firstName,
-              lastName: user.personalInfo.lastName,
-              documentType: user.personalInfo.documentType,
-              documentNumber: user.personalInfo.documentNumber,
-              gender: user.personalInfo.gender,
-              birthdate: user.personalInfo.birthdate,
-            }
-          : null,
-        contactInfo: user.contactInfo
-          ? {
-              phone: user.contactInfo.phone,
-              address: user.contactInfo.address || null,
-              postalCode: user.contactInfo.postalCode || null,
-              country: user.contactInfo.country,
-            }
-          : null,
-        billingInfo: user.billingInfo
-          ? {
-              ruc: user.billingInfo.ruc || null,
-              razonSocial: user.billingInfo.razonSocial || null,
-              address: user.billingInfo.address || null,
-            }
-          : null,
-        bankInfo: user.bankInfo
-          ? {
-              bankName: user.bankInfo.bankName || null,
-              accountNumber: user.bankInfo.accountNumber || null,
-              cci: user.bankInfo.cci || null,
-            }
-          : null,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      };
-    } catch (error) {
-      this.logger.error(`Error obteniendo perfil de usuario: ${error.message}`);
-
-      if (error instanceof RpcException) {
-        throw error;
-      }
-
-      throw new RpcException({
-        status: 500,
-        message: 'Error interno del servidor al obtener perfil de usuario',
-      });
-    }
-  }
-  async updateContactInfo(
-    userId: string,
-    updateContactInfoDto: UpdateContactInfoDto,
-  ) {
-    try {
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-
-      const existingUser = await this.userModel.findById(userId).exec();
-      if (!existingUser) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      const updateData: Record<string, unknown> = {};
-
-      if (updateContactInfoDto.phone !== undefined) {
-        updateData['contactInfo.phone'] = updateContactInfoDto.phone;
-      }
-      if (updateContactInfoDto.address !== undefined) {
-        updateData['contactInfo.address'] = updateContactInfoDto.address;
-      }
-      if (updateContactInfoDto.postalCode !== undefined) {
-        updateData['contactInfo.postalCode'] = updateContactInfoDto.postalCode;
-      }
-      if (updateContactInfoDto.country !== undefined) {
-        updateData['contactInfo.country'] = updateContactInfoDto.country;
-      }
-
-      if (Object.keys(updateData).length === 0) {
-        throw new RpcException({
-          status: 400,
-          message: 'No se proporcionaron campos para actualizar',
-        });
-      }
-
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(
-          userId,
-          { $set: updateData },
-          {
-            new: true,
-            runValidators: true,
-          },
-        )
-        .populate({
-          path: 'role',
-          select: 'id code name isActive',
-        })
-        .exec();
-
-      if (!updatedUser) {
-        throw new RpcException({
-          status: 404,
-          message: 'Usuario no encontrado',
-        });
-      }
-
-      return {
-        success: true,
-        message: 'Información de contacto actualizada correctamente',
-        data: {
-          contactInfo: {
-            phone: updatedUser.contactInfo?.phone || null,
-            address: updatedUser.contactInfo?.address || null,
-            postalCode: updatedUser.contactInfo?.postalCode || null,
-            country: updatedUser.contactInfo?.country || null,
-          },
-          updatedAt: updatedUser.updatedAt,
-        },
-      };
-    } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
-      }
-
-      if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(
-          error.errors as { [key: string]: { message: string } },
-        ).map((err) => err.message);
-        throw new RpcException({
-          status: 400,
-          message: 'Error de validación',
-          errors: validationErrors,
-        });
-      }
-
-      throw new RpcException({
-        status: 500,
-        message:
-          'Error interno del servidor al actualizar información de contacto',
-      });
-    }
-  }
-
-  async updateBillingInfo(
-    userId: string,
-    updateBillingInfoDto: UpdateBillingInfoDto,
-  ) {
-    try {
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-
-      const existingUser = await this.userModel.findById(userId).exec();
-      if (!existingUser) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      const updateData: Record<string, unknown> = {};
-
-      if (updateBillingInfoDto.ruc !== undefined) {
-        updateData['billingInfo.ruc'] = updateBillingInfoDto.ruc;
-      }
-      if (updateBillingInfoDto.razonSocial !== undefined) {
-        updateData['billingInfo.razonSocial'] =
-          updateBillingInfoDto.razonSocial;
-      }
-      if (updateBillingInfoDto.address !== undefined) {
-        updateData['billingInfo.address'] = updateBillingInfoDto.address;
-      }
-
-      if (Object.keys(updateData).length === 0) {
-        throw new RpcException({
-          status: 400,
-          message: 'No se proporcionaron campos para actualizar',
-        });
-      }
-
-      // Actualizar el usuario
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(
-          userId,
-          { $set: updateData },
-          {
-            new: true,
-            runValidators: true,
-          },
-        )
-        .exec();
-
-      if (!updatedUser) {
-        throw new RpcException({
-          status: 404,
-          message: 'Usuario no encontrado',
-        });
-      }
-
-      return {
-        success: true,
-        message: 'Información de facturación actualizada correctamente',
-        data: {
-          billingInfo: {
-            ruc: updatedUser.billingInfo?.ruc || null,
-            razonSocial: updatedUser.billingInfo?.razonSocial || null,
-            address: updatedUser.billingInfo?.address || null,
-          },
-          updatedAt: updatedUser.updatedAt,
-        },
-      };
-    } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
-      }
-
-      if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(
-          error.errors as { [key: string]: { message: string } },
-        ).map((err) => err.message);
-        throw new RpcException({
-          status: 400,
-          message: 'Error de validación',
-          errors: validationErrors,
-        });
-      }
-
-      throw new RpcException({
-        status: 500,
-        message:
-          'Error interno del servidor al actualizar información de facturación',
-      });
-    }
-  }
-
-  async updateBankInfo(userId: string, updateBankInfoDto: UpdateBankInfoDto) {
-    try {
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-
-      const existingUser = await this.userModel.findById(userId).exec();
-      if (!existingUser) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      const updateData: Record<string, unknown> = {};
-
-      if (updateBankInfoDto.bankName !== undefined) {
-        updateData['bankInfo.bankName'] = updateBankInfoDto.bankName;
-      }
-      if (updateBankInfoDto.accountNumber !== undefined) {
-        updateData['bankInfo.accountNumber'] = updateBankInfoDto.accountNumber;
-      }
-      if (updateBankInfoDto.cci !== undefined) {
-        updateData['bankInfo.cci'] = updateBankInfoDto.cci;
-      }
-
-      if (Object.keys(updateData).length === 0) {
-        throw new RpcException({
-          status: 400,
-          message: 'No se proporcionaron campos para actualizar',
-        });
-      }
-
-      // Actualizar el usuario
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(
-          userId,
-          { $set: updateData },
-          {
-            new: true,
-            runValidators: true,
-          },
-        )
-        .exec();
-
-      if (!updatedUser) {
-        throw new RpcException({
-          status: 404,
-          message: 'Usuario no encontrado',
-        });
-      }
-
-      return {
-        success: true,
-        message: 'Información bancaria actualizada correctamente',
-        data: {
-          bankInfo: {
-            bankName: updatedUser.bankInfo?.bankName || null,
-            accountNumber: updatedUser.bankInfo?.accountNumber || null,
-            cci: updatedUser.bankInfo?.cci || null,
-          },
-          updatedAt: updatedUser.updatedAt,
-        },
-      };
-    } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
-      }
-
-      if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(
-          error.errors as { [key: string]: { message: string } },
-        ).map((err) => err.message);
-        throw new RpcException({
-          status: 400,
-          message: 'Error de validación',
-          errors: validationErrors,
-        });
-      }
-
-      throw new RpcException({
-        status: 500,
-        message:
-          'Error interno del servidor al actualizar información bancaria',
-      });
-    }
-  }
-
-  async updatePersonalInfo(
-    userId: string,
-    updatePersonalInfoDto: UpdatePersonalInfoDto,
-  ) {
-    try {
-      // Validar ObjectId
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-
-      // Verificar que el usuario existe
-      const existingUser = await this.userModel.findById(userId).exec();
-      if (!existingUser) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      // Verificar email único si se está actualizando
-      if (updatePersonalInfoDto.email) {
-        const existingEmail = await this.userModel
-          .findOne({
-            _id: { $ne: userId }, // Excluir el usuario actual
-            email: updatePersonalInfoDto.email.toLowerCase(),
-          })
-          .exec();
-
-        if (existingEmail) {
-          throw new RpcException({
-            status: 409,
-            message: `Ya existe un usuario con el email: ${updatePersonalInfoDto.email}`,
-          });
-        }
-      }
-
-      // Verificar nickname único si se está actualizando
-      if (updatePersonalInfoDto.nickname) {
-        const existingNickname = await this.userModel
-          .findOne({
-            _id: { $ne: userId }, // Excluir el usuario actual
-            nickname: updatePersonalInfoDto.nickname,
-          })
-          .exec();
-
-        if (existingNickname) {
-          throw new RpcException({
-            status: 409,
-            message: `Ya existe un usuario con el nickname: ${updatePersonalInfoDto.nickname}`,
-          });
-        }
-      }
-
-      // Si se está actualizando el documento, verificar que no exista otro usuario con el mismo
-      if (
-        updatePersonalInfoDto.documentNumber ||
-        updatePersonalInfoDto.documentType
-      ) {
-        const docType =
-          updatePersonalInfoDto.documentType ||
-          existingUser.personalInfo.documentType;
-        const docNumber =
-          updatePersonalInfoDto.documentNumber ||
-          existingUser.personalInfo.documentNumber;
-
-        const existingDocument = await this.userModel
-          .findOne({
-            _id: { $ne: userId }, // Excluir el usuario actual
-            'personalInfo.documentType': docType,
-            'personalInfo.documentNumber': docNumber,
-          })
-          .exec();
-
-        if (existingDocument) {
-          throw new RpcException({
-            status: 409,
-            message: `Ya existe un usuario con el documento ${docType}: ${docNumber}`,
-          });
-        }
-      }
-
-      // Preparar el objeto de actualización
-      const updateData: Record<string, unknown> = {};
-
-      if (updatePersonalInfoDto.nickname !== undefined) {
-        updateData.nickname = updatePersonalInfoDto.nickname;
-      }
-      if (updatePersonalInfoDto.email !== undefined) {
-        updateData.email = updatePersonalInfoDto.email.toLowerCase();
-      }
-      if (updatePersonalInfoDto.documentType !== undefined) {
-        updateData['personalInfo.documentType'] =
-          updatePersonalInfoDto.documentType;
-      }
-      if (updatePersonalInfoDto.documentNumber !== undefined) {
-        updateData['personalInfo.documentNumber'] =
-          updatePersonalInfoDto.documentNumber;
-      }
-
-      if (Object.keys(updateData).length === 0) {
-        throw new RpcException({
-          status: 400,
-          message: 'No se proporcionaron campos para actualizar',
-        });
-      }
-
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(
-          userId,
-          { $set: updateData },
-          {
-            new: true,
-            runValidators: true,
-          },
-        )
-        .exec();
-
-      if (!updatedUser) {
-        throw new RpcException({
-          status: 404,
-          message: 'Usuario no encontrado',
-        });
-      }
-
-      return {
-        success: true,
-        message: 'Información personal actualizada correctamente',
-        data: {
-          nickname: updatedUser.nickname || null,
-          email: updatedUser.email || null,
-          personalInfo: {
-            documentType: updatedUser.personalInfo?.documentType || null,
-            documentNumber: updatedUser.personalInfo?.documentNumber || null,
-          },
-          updatedAt: updatedUser.updatedAt,
-        },
-      };
-    } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
-      }
-
-      if (error.name === 'ValidationError') {
-        const validationErrors = Object.values(
-          error.errors as { [key: string]: { message: string } },
-        ).map((err) => err.message);
-        throw new RpcException({
-          status: 400,
-          message: 'Error de validación',
-          errors: validationErrors,
-        });
-      }
-
-      // Error de duplicado de MongoDB
-      if (error.code === 11000) {
-        const duplicatedField = Object.keys(
-          error.keyPattern as Record<string, unknown>,
-        )[0];
-        let message = 'Ya existe un usuario con esta información';
-
-        if (duplicatedField === 'email') {
-          message = 'Ya existe un usuario con este email';
-        } else if (duplicatedField === 'nickname') {
-          message = 'Ya existe un usuario con este nickname';
-        }
-
+      if (existingDocument) {
         throw new RpcException({
           status: 409,
-          message,
+          message: `Ya existe un usuario con el documento ${finalDocType}: ${finalDocNumber}`,
         });
       }
+    }
+  }
 
+  private async validateUniqueField(
+    userId: string,
+    field: string,
+    value: any,
+    errorMessage: string,
+  ): Promise<void> {
+    const existing = await this.userModel
+      .findOne({
+        _id: { $ne: userId },
+        [field]: value,
+      })
+      .exec();
+
+    if (existing) {
       throw new RpcException({
-        status: 500,
-        message:
-          'Error interno del servidor al actualizar información personal',
+        status: 409,
+        message: errorMessage,
       });
     }
   }
 
-  async updatePhoto(userId: string, updatePhotoDto: UpdatePhotoDto) {
+  private analyzeExistingPhoto(user: UserDocument): {
+    oldPhotoKey: string | null;
+    shouldDeleteOldPhoto: boolean;
+  } {
+    if (!user.photo) {
+      return { oldPhotoKey: null, shouldDeleteOldPhoto: false };
+    }
+
+    if (user.photo.includes('cloudinary')) {
+      return { oldPhotoKey: null, shouldDeleteOldPhoto: false };
+    }
+
+    return {
+      oldPhotoKey: user.photoKey ?? null,
+      shouldDeleteOldPhoto: true,
+    };
+  }
+
+  private async uploadPhotoToS3(
+    dto: UpdatePhotoDto,
+  ): Promise<{ url: string; key: string }> {
+    const uploadResult = await firstValueFrom(
+      this.client.send(
+        { cmd: 'integration.files.uploadImage' },
+        {
+          file: dto.file,
+          folder: 'profiles',
+        },
+      ),
+    );
+
+    if (!uploadResult.success && !uploadResult.url) {
+      throw new RpcException({
+        status: 500,
+        message: 'Error al subir la imagen',
+      });
+    }
+
+    return uploadResult;
+  }
+
+  private async deleteOldPhoto(photoKey: string): Promise<void> {
     try {
-      if (!Types.ObjectId.isValid(userId)) {
-        throw new RpcException({
-          status: 400,
-          message: 'ID de usuario inválido',
-        });
-      }
-      const existingUser = await this.userModel.findById(userId).exec();
-      if (!existingUser) {
-        throw new RpcException({
-          status: 404,
-          message: `Usuario con ID ${userId} no encontrado`,
-        });
-      }
-
-      let oldPhotoKey: string | null = null;
-      let shouldDeleteOldPhoto = false;
-
-      if (existingUser.photo) {
-        if (existingUser.photo.includes('cloudinary')) {
-          this.logger.log(
-            `Usuario ${userId} tiene foto de Cloudinary, creando nueva sin eliminar anterior`,
-          );
-        } else {
-          oldPhotoKey = existingUser.photoKey ?? null;
-          shouldDeleteOldPhoto = true;
-          this.logger.log(
-            `Usuario ${userId} tiene foto de S3, se eliminará la anterior: ${oldPhotoKey}`,
-          );
-        }
-      }
-
-      const uploadResult = await firstValueFrom(
+      await firstValueFrom(
         this.client.send(
-          { cmd: 'integration.files.uploadImage' },
-          {
-            file: updatePhotoDto.file,
-            folder: 'profiles',
-          },
+          { cmd: 'integration.files.delete' },
+          { key: photoKey },
         ),
       );
+    } catch (deleteError) {
+      this.logger.warn(
+        `⚠️ No se pudo eliminar la foto anterior de S3: ${photoKey}`,
+        deleteError,
+      );
+    }
+  }
 
-      if (!uploadResult.success && !uploadResult.url) {
-        throw new RpcException({
-          status: 500,
-          message: 'Error al subir la imagen',
-        });
-      }
+  private formatUserProfile(user: UserDocument): Record<string, any> {
+    return {
+      id: (user._id as Types.ObjectId).toString(),
+      email: user.email,
+      referralCode: user.referralCode,
+      referrerCode: user.referrerCode || null,
+      isActive: user.isActive,
+      nickname: user.nickname || null,
+      photo: user.photo || null,
+      photoKey: user.photoKey || null,
+      lastLoginAt: user.lastLoginAt || null,
+      position: user.position || null,
+      role: {
+        id: (user.role as any)._id.toString(),
+        code: (user.role as any).code,
+        name: (user.role as any).name,
+        isActive: (user.role as any).isActive,
+      },
+      personalInfo: user.personalInfo
+        ? {
+            firstName: user.personalInfo.firstName,
+            lastName: user.personalInfo.lastName,
+            documentType: user.personalInfo.documentType,
+            documentNumber: user.personalInfo.documentNumber,
+            gender: user.personalInfo.gender,
+            birthdate: user.personalInfo.birthdate,
+          }
+        : null,
+      contactInfo: user.contactInfo
+        ? {
+            phone: user.contactInfo.phone,
+            address: user.contactInfo.address || null,
+            postalCode: user.contactInfo.postalCode || null,
+            country: user.contactInfo.country,
+          }
+        : null,
+      billingInfo: user.billingInfo
+        ? {
+            ruc: user.billingInfo.ruc || null,
+            razonSocial: user.billingInfo.razonSocial || null,
+            address: user.billingInfo.address || null,
+          }
+        : null,
+      bankInfo: user.bankInfo
+        ? {
+            bankName: user.bankInfo.bankName || null,
+            accountNumber: user.bankInfo.accountNumber || null,
+            cci: user.bankInfo.cci || null,
+          }
+        : null,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+  }
 
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(
-          userId,
-          {
-            $set: {
-              photo: uploadResult.url,
-              photoKey: uploadResult.key,
-            },
-          },
-          {
-            new: true,
-            runValidators: true,
-          },
-        )
-        .exec();
+  private handleError(error: any, defaultMessage: string): never {
+    this.logger.error(`${defaultMessage}: ${error.message}`);
 
-      if (!updatedUser) {
-        throw new RpcException({
-          status: 404,
-          message: 'Usuario no encontrado',
-        });
-      }
+    if (error instanceof RpcException) {
+      throw error;
+    }
 
-      if (shouldDeleteOldPhoto && oldPhotoKey) {
-        try {
-          await firstValueFrom(
-            this.client.send(
-              { cmd: 'integration.files.delete' },
-              { key: oldPhotoKey },
-            ),
-          );
-        } catch (deleteError) {
-          this.logger.warn(
-            `⚠️ No se pudo eliminar la foto anterior de S3: ${oldPhotoKey}`,
-            deleteError,
-          );
-        }
-      }
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(
+        error.errors as { [key: string]: { message: string } },
+      ).map((err) => err.message);
 
-      return {
-        success: true,
-        message: 'Foto de perfil actualizada correctamente',
-        data: {
-          photo: updatedUser.photo,
-          photoKey: updatedUser.photoKey,
-          updatedAt: updatedUser.updatedAt,
-        },
-      };
-    } catch (error) {
-      if (error instanceof RpcException) {
-        throw error;
+      throw new RpcException({
+        status: 400,
+        message: 'Error de validación',
+        errors: validationErrors,
+      });
+    }
+
+    if (error.code === 11000) {
+      const duplicatedField = Object.keys(
+        error.keyPattern as Record<string, unknown>,
+      )[0];
+
+      let message = 'Ya existe un usuario con esta información';
+      if (duplicatedField === 'email') {
+        message = 'Ya existe un usuario con este email';
+      } else if (duplicatedField === 'nickname') {
+        message = 'Ya existe un usuario con este nickname';
       }
 
       throw new RpcException({
-        status: 500,
-        message: 'Error interno del servidor al actualizar foto de perfil',
+        status: 409,
+        message,
       });
     }
+
+    throw new RpcException({
+      status: 500,
+      message: defaultMessage,
+    });
   }
 }
