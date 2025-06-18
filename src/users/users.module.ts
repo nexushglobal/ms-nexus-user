@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 import { MongooseModule } from '@nestjs/mongoose';
+import { envs } from 'src/config/envs';
+import { NATS_SERVICE } from 'src/config/services';
 import { Role, RoleSchema } from '../roles/schemas/roles.schema';
 import { View, ViewSchema } from '../views/schemas/views.schema';
-import { PasswordController } from './controllers/password.controller';
 import { ProfileController } from './controllers/profile.controller';
 import { TreeController } from './controllers/tree.controller';
 import { UsersController } from './controllers/users.controller';
@@ -11,13 +13,9 @@ import {
   PasswordResetTokenSchema,
 } from './schemas/password-reset-token.schema';
 import { User, UserSchema } from './schemas/user.schema';
-import { PasswordResetService } from './services/password-reset.service';
 import { ProfileService } from './services/profile.service';
 import { TreeService } from './services/tree.service';
 import { UsersService } from './services/users.service';
-import { ClientsModule, Transport } from '@nestjs/microservices';
-import { NATS_SERVICE } from 'src/config/services';
-import { envs } from 'src/config/envs';
 
 @Module({
   imports: [
@@ -49,19 +47,8 @@ import { envs } from 'src/config/envs';
       },
     ]),
   ],
-  controllers: [
-    UsersController,
-    PasswordController,
-    ProfileController,
-    TreeController,
-  ],
-  providers: [UsersService, PasswordResetService, ProfileService, TreeService],
-  exports: [
-    MongooseModule,
-    UsersService,
-    PasswordResetService,
-    ProfileService,
-    TreeService,
-  ],
+  controllers: [UsersController, ProfileController, TreeController],
+  providers: [UsersService, ProfileService, TreeService],
+  exports: [MongooseModule, UsersService, ProfileService, TreeService],
 })
 export class UsersModule {}
