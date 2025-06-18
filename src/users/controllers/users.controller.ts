@@ -56,4 +56,20 @@ export class UsersController {
   updatePassword(@Payload() data: { userId: string; password: string }) {
     return this.usersService.updatePassword(data.userId, data.password);
   }
+
+  @MessagePattern({ cmd: 'user.changePassword' })
+  changePassword(
+    @Payload()
+    data: {
+      userId: string;
+      currentPassword: string;
+      newPassword: string;
+    },
+  ) {
+    return this.usersService.changePassword(
+      data.userId,
+      data.currentPassword,
+      data.newPassword,
+    );
+  }
 }

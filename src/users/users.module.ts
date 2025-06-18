@@ -5,6 +5,7 @@ import { envs } from 'src/config/envs';
 import { NATS_SERVICE } from 'src/config/services';
 import { Role, RoleSchema } from '../roles/schemas/roles.schema';
 import { View, ViewSchema } from '../views/schemas/views.schema';
+import { PasswordResetController } from './controllers/password-reset.controller';
 import { ProfileController } from './controllers/profile.controller';
 import { TreeController } from './controllers/tree.controller';
 import { UsersController } from './controllers/users.controller';
@@ -13,6 +14,7 @@ import {
   PasswordResetTokenSchema,
 } from './schemas/password-reset-token.schema';
 import { User, UserSchema } from './schemas/user.schema';
+import { PasswordResetService } from './services/password-reset.service';
 import { ProfileService } from './services/profile.service';
 import { TreeService } from './services/tree.service';
 import { UsersService } from './services/users.service';
@@ -47,8 +49,19 @@ import { UsersService } from './services/users.service';
       },
     ]),
   ],
-  controllers: [UsersController, ProfileController, TreeController],
-  providers: [UsersService, ProfileService, TreeService],
-  exports: [MongooseModule, UsersService, ProfileService, TreeService],
+  controllers: [
+    UsersController,
+    ProfileController,
+    TreeController,
+    PasswordResetController,
+  ],
+  providers: [UsersService, ProfileService, TreeService, PasswordResetService],
+  exports: [
+    MongooseModule,
+    UsersService,
+    ProfileService,
+    TreeService,
+    PasswordResetService,
+  ],
 })
 export class UsersModule {}

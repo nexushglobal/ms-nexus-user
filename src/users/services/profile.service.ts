@@ -108,9 +108,7 @@ export class ProfileService {
 
   async updatePhoto(userId: string, dto: UpdatePhotoDto) {
     try {
-      console.log('Actualizando foto de perfil para el usuario:', userId);
       const existingUser = await this.validateUserAndGet(userId);
-      console.log('Usuario existente encontrado:', existingUser);
 
       const { oldPhotoKey, shouldDeleteOldPhoto } =
         this.analyzeExistingPhoto(existingUser);
@@ -119,17 +117,14 @@ export class ProfileService {
         shouldDeleteOldPhoto,
       });
       const uploadResult = await this.uploadPhotoToS3(dto);
-      console.log('Foto subida a S3:', uploadResult);
 
       const updatedUser = await this.updateUserById(userId, {
         photo: uploadResult.url,
         photoKey: uploadResult.key,
       });
-      console.log('Usuario actualizado con nueva foto:', updatedUser);
 
       // Eliminar foto anterior si es necesario
       if (shouldDeleteOldPhoto && oldPhotoKey) {
-        console.log('Eliminando foto anterior de S3:', oldPhotoKey);
         await this.deleteOldPhoto(oldPhotoKey);
       }
 
@@ -139,7 +134,6 @@ export class ProfileService {
         updatedAt: updatedUser.updatedAt,
       };
     } catch (error) {
-      console.error('Error actualizando foto de perfil:', error);
       this.handleError(error, 'Error actualizando foto de perfil');
     }
   }

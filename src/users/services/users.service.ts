@@ -354,7 +354,6 @@ export class UsersService {
     }
   }
 
-  // Método para validar si un usuario existe y está activo
   async validateUserExists(userId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(userId)) {
       return false;
@@ -368,7 +367,6 @@ export class UsersService {
     return user?.isActive || false;
   }
 
-  // Método para obtener información básica del usuario
   async getUserBasicInfo(userId: string): Promise<{
     id: string;
     email: string;
@@ -400,7 +398,6 @@ export class UsersService {
     };
   }
 
-  // Método para actualizar contraseña
   async updatePassword(
     userId: string,
     hashedPassword: string,
@@ -418,6 +415,94 @@ export class UsersService {
     } catch (error) {
       console.error('Error updating password:', error);
       return false;
+    }
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      if (!Types.ObjectId.isValid(userId)) {
+        throw new RpcException({
+          status: 400,
+          message: 'ID de usuario inválido',
+        });
+      }
+
+      const user = await this.userModel
+        .findById(userId)
+        .select('+password')
+        .exec();
+
+      if (!user) {
+        throw new RpcException({
+          status: 404,
+          message: 'Usuario no encontrado',
+        });
+      }
+
+      if (!user.isActive) {
+        throw new RpcException({
+          status: 403,
+          message: 'Usuario inactivo',
+        });
+      }
+
+      const isCurrentPasswordValid = await bcrypt.compare(
+        currentPassword,
+        user.password,
+      );
+
+      if (!isCurrentPasswordValid) {
+        throw new RpcException({
+          status: 400,
+          message: 'La contraseña actual es incorrecta',
+        });
+      }
+
+      const isSamePassword = await bcrypt.compare(newPassword, user.password);
+      if (isSamePassword) {
+        throw new RpcException({
+          status: 400,
+          message: 'La nueva contraseña debe ser diferente a la actual',
+        });
+      }
+
+      const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+      await this.userModel
+        .findByIdAndUpdate(
+          userId,
+          {
+            password: hashedNewPassword,
+            updatedAt: new Date(),
+          },
+          { new: true },
+        )
+        .exec();
+
+      this.logger.log(`✅ Contraseña actualizada para usuario: ${userId}`);
+
+      return {
+        success: true,
+        message: 'Contraseña actualizada exitosamente',
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Error cambiando contraseña para usuario ${userId}:`,
+        error,
+      );
+
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
+      throw new RpcException({
+        status: 500,
+        message: 'Error interno del servidor al cambiar la contraseña',
+      });
     }
   }
 }

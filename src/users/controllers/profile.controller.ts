@@ -3,9 +3,9 @@ import { MessagePattern, Payload } from '@nestjs/microservices';
 import { UpdateBankInfoDto } from '../dto/update-back-info.dto';
 import { UpdateBillingInfoDto } from '../dto/update-billing-info.dto';
 import { UpdateContactInfoDto } from '../dto/update-conteact-info.dto';
+import { UpdatePhotoDto } from '../dto/update-photo-dto';
 import { UpdatePersonalInfoDto } from '../dto/update-profile-info.dto';
 import { ProfileService } from '../services/profile.service';
-import { UpdatePhotoDto } from '../dto/update-photo-dto';
 
 @Controller()
 export class ProfileController {
