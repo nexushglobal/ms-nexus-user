@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { RpcException } from '@nestjs/microservices';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
-
 import { Model, Types } from 'mongoose';
+import { firstValueFrom } from 'rxjs';
+import { NATS_SERVICE } from 'src/config/services';
 import { v4 as uuidv4 } from 'uuid';
 import { Role, RoleDocument } from '../../roles/schemas/roles.schema';
 import { View, ViewDocument } from '../../views/schemas/views.schema';
@@ -19,14 +20,17 @@ import {
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Role.name) private roleModel: Model<RoleDocument>,
     @InjectModel(View.name) private viewModel: Model<ViewDocument>,
+    @Inject(NATS_SERVICE) private readonly client: ClientProxy,
   ) {}
 
   async register(registerDto: RegisterDto) {
     try {
+      // Validaciones existentes
       const existingEmail = await this.userModel.findOne({
         email: registerDto.email.toLowerCase(),
       });
@@ -60,24 +64,22 @@ export class UsersService {
       }
 
       const referralCode = await this.generateUniqueReferralCode();
-
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
-      let parentUser: UserDocument | null = null;
-      const assignedPosition = registerDto.position || 'LEFT';
 
+      let parentUser: UserDocument | null = null;
+      let assignedPosition: Position = Position.LEFT;
+
+      // Si hay código de referido, buscar posición automáticamente
       if (registerDto.referrerCode) {
-        parentUser = await this.userModel.findOne({
-          referralCode: registerDto.referrerCode,
-          isActive: true,
-        });
-        if (!parentUser) {
-          throw new RpcException({
-            status: 404,
-            message: `El código de referido ${registerDto.referrerCode} no existe`,
-          });
-        }
+        const { parent, position } = await this.findOptimalPosition(
+          registerDto.referrerCode,
+          registerDto.position,
+        );
+        parentUser = parent;
+        assignedPosition = position;
       }
 
+      // Crear nuevo usuario
       const newUser = new this.userModel({
         email: registerDto.email.toLowerCase(),
         password: hashedPassword,
@@ -103,6 +105,7 @@ export class UsersService {
 
       const savedUser = await newUser.save();
 
+      // Actualizar el árbol binario
       if (parentUser && assignedPosition) {
         if (assignedPosition === Position.LEFT) {
           parentUser.leftChild = savedUser._id as Types.ObjectId;
@@ -111,6 +114,11 @@ export class UsersService {
         }
         await parentUser.save();
       }
+
+      // Enviar correo de bienvenida
+      await this.sendWelcomeEmail(savedUser);
+
+      this.logger.log(`✅ Usuario registrado exitosamente: ${savedUser.email}`);
 
       return {
         user: {
@@ -127,11 +135,9 @@ export class UsersService {
       }
 
       if (error.code === 11000) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        const field = Object.keys(error.keyPattern)[0];
         throw new RpcException({
           status: 409,
-          message: `Ya existe un registro con ese ${field}`,
+          message: `Ya existe un registro con ese campo`,
         });
       }
 
@@ -142,6 +148,197 @@ export class UsersService {
     }
   }
 
+  /**
+   * Encuentra la posición óptima para asignar un nuevo usuario
+   */
+  private async findOptimalPosition(
+    referrerCode: string,
+    preferredPosition?: Position | string,
+  ): Promise<{ parent: UserDocument; position: Position }> {
+    // Buscar el usuario referidor
+    const referrerUser = await this.userModel.findOne({
+      referralCode: referrerCode.toUpperCase(),
+      isActive: true,
+    });
+
+    if (!referrerUser) {
+      throw new RpcException({
+        status: 404,
+        message: `El código de referido ${referrerCode} no existe`,
+      });
+    }
+
+    // Determinar posición objetivo
+    const targetPosition =
+      preferredPosition === 'RIGHT' ? Position.RIGHT : Position.LEFT;
+
+    // Buscar posición usando BFS
+    let availableParent = await this.findAvailablePosition(
+      referrerUser,
+      targetPosition,
+    );
+
+    // Verificar si la posición está disponible
+    if (
+      (targetPosition === Position.LEFT && !availableParent.leftChild) ||
+      (targetPosition === Position.RIGHT && !availableParent.rightChild)
+    ) {
+      return { parent: availableParent, position: targetPosition };
+    }
+
+    // Si la posición preferida no está disponible, buscar la alternativa
+    const alternativePosition =
+      targetPosition === Position.LEFT ? Position.RIGHT : Position.LEFT;
+    availableParent = await this.findAvailablePosition(
+      referrerUser,
+      alternativePosition,
+    );
+
+    if (
+      (alternativePosition === Position.LEFT && !availableParent.leftChild) ||
+      (alternativePosition === Position.RIGHT && !availableParent.rightChild)
+    ) {
+      return { parent: availableParent, position: alternativePosition };
+    }
+
+    // Fallback: asignar directamente bajo el referidor
+    if (!referrerUser.leftChild) {
+      return { parent: referrerUser, position: Position.LEFT };
+    } else {
+      return { parent: referrerUser, position: Position.RIGHT };
+    }
+  }
+
+  /**
+   * Busca posición disponible usando BFS (sin límites)
+   */
+  private async findAvailablePosition(
+    startUser: UserDocument,
+    targetPosition: Position,
+  ): Promise<UserDocument> {
+    const queue: UserDocument[] = [startUser];
+
+    while (queue.length > 0) {
+      const currentUser = queue.shift()!;
+
+      // Si la posición está libre, retornar este usuario
+      if (targetPosition === Position.LEFT && !currentUser.leftChild) {
+        return currentUser;
+      }
+      if (targetPosition === Position.RIGHT && !currentUser.rightChild) {
+        return currentUser;
+      }
+
+      // Agregar hijos a la cola para el siguiente nivel
+      if (currentUser.leftChild) {
+        const leftChild = await this.userModel.findById(currentUser.leftChild);
+        if (leftChild) queue.push(leftChild);
+      }
+
+      if (currentUser.rightChild) {
+        const rightChild = await this.userModel.findById(
+          currentUser.rightChild,
+        );
+        if (rightChild) queue.push(rightChild);
+      }
+    }
+
+    // Si llegamos aquí, retornar el usuario inicial como fallback
+    return startUser;
+  }
+
+  /**
+   * Envía correo de bienvenida al nuevo usuario
+   */
+  private async sendWelcomeEmail(user: UserDocument): Promise<void> {
+    try {
+      const emailData = {
+        to: user.email,
+        subject: '¡Bienvenido a nuestra plataforma! 🎉',
+        html: this.generateWelcomeEmailTemplate(user),
+      };
+
+      await firstValueFrom(
+        this.client.send({ cmd: 'integration.email.send' }, emailData),
+      );
+
+      this.logger.log(`📧 Correo de bienvenida enviado a: ${user.email}`);
+    } catch (error) {
+      this.logger.error(
+        `❌ Error enviando correo de bienvenida a ${user.email}:`,
+        error,
+      );
+      // No lanzamos error aquí para no fallar el registro si falla el email
+    }
+  }
+
+  /**
+   * Genera el template HTML para el correo de bienvenida
+   */
+  private generateWelcomeEmailTemplate(user: UserDocument): string {
+    const firstName = user.personalInfo?.firstName || 'Usuario';
+    const referralCode = user.referralCode;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>¡Bienvenido a nuestra plataforma!</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #2c3e50; margin: 0; font-size: 28px;">¡Bienvenido! 🎉</h1>
+          </div>
+          
+          <div style="margin-bottom: 30px;">
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              Hola <strong>${firstName}</strong>,
+            </p>
+            
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              ¡Gracias por unirte a nuestra plataforma! Tu cuenta ha sido creada exitosamente.
+            </p>
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+              <h3 style="color: #28a745; margin-top: 0;">Información de tu cuenta:</h3>
+              <ul style="color: #333; line-height: 1.8;">
+                <li><strong>Email:</strong> ${user.email}</li>
+                <li><strong>Código de referido:</strong> <span style="background-color: #e3f2fd; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-weight: bold;">${referralCode}</span></li>
+                <li><strong>Fecha de registro:</strong> ${new Date().toLocaleDateString('es-ES')}</li>
+              </ul>
+            </div>
+            
+            <div style="background-color: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
+              <h3 style="color: #2c3e50; margin-top: 0;">Tu código de referido:</h3>
+              <div style="background-color: #28a745; color: white; padding: 15px; border-radius: 8px; font-size: 20px; font-weight: bold; letter-spacing: 2px; margin: 10px 0;">
+                ${referralCode}
+              </div>
+              <p style="color: #666; font-size: 14px; margin-bottom: 0;">
+                Comparte este código con tus amigos para que puedan unirse a tu red
+              </p>
+            </div>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="http://localhost:3000/login" style="background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                Iniciar Sesión
+              </a>
+            </div>
+          </div>
+          
+          <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; text-align: center; color: #999; font-size: 12px;">
+            <p>Este es un correo automático, por favor no respondas.</p>
+            <p style="margin: 5px 0;">© ${new Date().getFullYear()} Nuestra Plataforma. Todos los derechos reservados.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  // ... resto de métodos existentes sin cambios
   private async generateUniqueReferralCode(): Promise<string> {
     let referralCode: string;
     let attempts = 0;
@@ -191,7 +388,6 @@ export class UsersService {
       .exec();
   }
 
-  // Nuevo método para obtener usuario con toda la información necesaria para auth
   async findUserWithRoleById(id: string) {
     if (!Types.ObjectId.isValid(id)) {
       return null;
@@ -246,7 +442,6 @@ export class UsersService {
     };
   }
 
-  // Método para obtener usuario con password para validación
   async findByEmailWithPassword(email: string) {
     const user = await this.userModel
       .findOne({ email: email.toLowerCase() })
@@ -272,7 +467,6 @@ export class UsersService {
     };
   }
 
-  // Método para obtener el usuario principal (root con rol CLI)
   async findPrincipalUser() {
     const user = await this.userModel
       .findOne({
@@ -290,28 +484,9 @@ export class UsersService {
     return {
       id: (user._id as Types.ObjectId).toString(),
       email: user.email,
-      // password: user.password,
-      // isActive: user.isActive,
-      // role: {
-      //   id: user.role._id.toString(),
-      //   code: user.role.code,
-      //   name: user.role.name,
-      //   isActive: user.role.isActive,
-      // },
-      // personalInfo: user.personalInfo
-      //   ? {
-      //       firstName: user.personalInfo.firstName,
-      //       lastName: user.personalInfo.lastName,
-      //     }
-      //   : undefined,
-      // photo: user.photo,
-      // nickname: user.nickname,
     };
   }
 
-  // Método para obtener las vistas por rol
-
-  // Método para actualizar la última conexión del usuario
   async updateLastLoginAt(userId: string) {
     try {
       if (!Types.ObjectId.isValid(userId)) {
@@ -324,15 +499,12 @@ export class UsersService {
           userId,
           {
             lastLoginAt: new Date(),
-            // Si es la primera vez que inicia sesión, también podemos actualizar otros campos
-            $setOnInsert: {
-              // Campos que solo se establecen si no existen
-            },
+            $setOnInsert: {},
           },
           {
             new: true,
-            upsert: false, // No crear si no existe
-            runValidators: true, // Ejecutar validadores del schema
+            upsert: false,
+            runValidators: true,
           },
         )
         .exec();
