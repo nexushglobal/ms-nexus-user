@@ -1,5 +1,3 @@
-// src/migration/user-migration.service.ts
-
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -68,6 +66,8 @@ export class UserMigrationService {
       result.success = false;
       result.message = `Error durante la migración de usuarios: ${error.message}`;
       this.logger.error('❌ Error durante la migración de usuarios:', error);
+      // Re-lanzar el error para que el controlador lo maneje
+      throw error;
     }
 
     return result;

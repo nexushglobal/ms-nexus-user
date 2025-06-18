@@ -15,49 +15,30 @@ export class UserMigrationController {
 
   @MessagePattern({ cmd: 'user.migrate.users' })
   async migrateUsers(@Payload() payload: UserMigrationPayload) {
-    try {
-      this.logger.log('📨 Solicitud de migración de usuarios recibida');
+    this.logger.log('📨 Solicitud de migración de usuarios recibida');
 
-      if (!payload.users || !Array.isArray(payload.users)) {
-        return {
-          success: false,
-          message:
-            'Faltan datos requeridos: users es obligatorio y debe ser un array',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      this.logger.log(`📊 Total de usuarios a migrar: ${payload.users.length}`);
-
-      const validation = this.userMigrationService.validateUserData(
-        payload.users,
+    if (!payload.users || !Array.isArray(payload.users)) {
+      throw new Error(
+        'Faltan datos requeridos: users es obligatorio y debe ser un array',
       );
-
-      if (!validation.valid) {
-        return {
-          success: false,
-          message: 'Datos de usuarios inválidos',
-          errors: validation.errors,
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      const result = await this.userMigrationService.migrateUsers(
-        payload.users,
-      );
-
-      return {
-        ...result,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error('Error durante la migración de usuarios:', error);
-      return {
-        success: false,
-        message: 'Error interno durante la migración de usuarios',
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
     }
+
+    this.logger.log(`📊 Total de usuarios a migrar: ${payload.users.length}`);
+
+    const validation = this.userMigrationService.validateUserData(
+      payload.users,
+    );
+
+    if (!validation.valid) {
+      throw new Error(
+        `Datos de usuarios inválidos: ${validation.errors.join(', ')}`,
+      );
+    }
+
+    // Ejecutar migración y devolver solo el resultado
+    const result = await this.userMigrationService.migrateUsers(payload.users);
+
+    // Devolver solo el resultado sin wrapper de success/message
+    return result;
   }
 }

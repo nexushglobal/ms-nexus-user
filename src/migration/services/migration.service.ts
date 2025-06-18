@@ -65,6 +65,8 @@ export class MigrationService {
       result.success = false;
       result.message = `Error durante la migración: ${error.message}`;
       this.logger.error('❌ Error durante la migración:', error);
+      // Re-lanzar el error para que el controlador lo maneje
+      throw error;
     }
 
     return result;
@@ -127,16 +129,13 @@ export class MigrationService {
   ): Promise<void> {
     details.total = viewsData.length;
 
-    // Ordenar vistas: primero las padres (parentId null), luego las hijas
     const parentViews = viewsData.filter((v) => !v.parentId);
     const childViews = viewsData.filter((v) => v.parentId);
 
-    // Migrar vistas padre primero
     for (const viewData of parentViews) {
       await this.createView(viewData, details);
     }
 
-    // Migrar vistas hijas después
     for (const viewData of childViews) {
       await this.createView(viewData, details);
     }
@@ -147,7 +146,6 @@ export class MigrationService {
     details: any,
   ): Promise<void> {
     try {
-      // Verificar si la vista ya existe
       const existingView = await this.viewModel
         .findOne({
           code: viewData.code.toUpperCase(),
@@ -164,7 +162,6 @@ export class MigrationService {
         return;
       }
 
-      // Determinar el parent si existe
       let parentObjectId: Types.ObjectId | null = null;
       if (viewData.parentId) {
         const parentId = this.viewIdMap.get(viewData.parentId);
@@ -177,7 +174,6 @@ export class MigrationService {
         }
       }
 
-      // Crear nueva vista
       const newView = new this.viewModel({
         code: viewData.code.toUpperCase(),
         name: viewData.name,
@@ -197,7 +193,6 @@ export class MigrationService {
         (savedView._id as Types.ObjectId).toString(),
       );
 
-      // Si es una vista hija, actualizar el parent para incluirla en children
       if (parentObjectId) {
         await this.viewModel
           .findByIdAndUpdate(parentObjectId, {
