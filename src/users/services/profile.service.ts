@@ -399,15 +399,6 @@ export class ProfileService {
       isActive: user.isActive,
       nickname: user.nickname || null,
       photo: user.photo || null,
-      photoKey: user.photoKey || null,
-      lastLoginAt: user.lastLoginAt || null,
-      position: user.position || null,
-      role: {
-        id: (user.role as any)._id.toString(),
-        code: (user.role as any).code,
-        name: (user.role as any).name,
-        isActive: (user.role as any).isActive,
-      },
       personalInfo: user.personalInfo
         ? {
             firstName: user.personalInfo.firstName,
@@ -440,8 +431,6 @@ export class ProfileService {
             cci: user.bankInfo.cci || null,
           }
         : null,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
     };
   }
 
