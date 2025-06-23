@@ -3,7 +3,6 @@ import { Document, Types } from 'mongoose';
 
 export type UserDocument = User & Document;
 
-// Enums
 export enum DocumentType {
   DNI = 'DNI',
   CE = 'CE',
@@ -21,7 +20,6 @@ export enum Position {
   RIGHT = 'RIGHT',
 }
 
-// Subdocumento PersonalInfo
 @Schema({ _id: false })
 export class PersonalInfo {
   @Prop({
@@ -68,7 +66,6 @@ export class PersonalInfo {
 
 export const PersonalInfoSchema = SchemaFactory.createForClass(PersonalInfo);
 
-// Subdocumento ContactInfo
 @Schema({ _id: false })
 export class ContactInfo {
   @Prop({
