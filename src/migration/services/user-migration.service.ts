@@ -18,7 +18,6 @@ import {
 export class UserMigrationService {
   private readonly logger = new Logger(UserMigrationService.name);
 
-  // Mapeo de UUIDs antiguos a ObjectIds nuevos
   private userIdMap = new Map<string, string>();
   private roleCodeMap = new Map<string, string>();
 
@@ -151,18 +150,19 @@ export class UserMigrationService {
             postalCode: userData.postalCode?.trim(),
             country: 'Peru', // Por defecto Peru como solicitas
           },
-          billingInfo: userData.billing_info_id
+          billingInfo: userData.billing_address
             ? {
                 address: userData.billing_address?.trim(),
               }
             : undefined,
-          bankInfo: userData.bank_info_id
-            ? {
-                bankName: userData.bankName?.trim(),
-                accountNumber: userData.accountNumber?.trim(),
-                cci: userData.cci?.trim(),
-              }
-            : undefined,
+          bankInfo:
+            userData.bankName || userData.accountNumber || userData.cci
+              ? {
+                  bankName: userData.bankName?.trim(),
+                  accountNumber: userData.accountNumber?.trim(),
+                  cci: userData.cci?.trim(),
+                }
+              : undefined,
         });
 
         // Establecer fechas de creación y actualización

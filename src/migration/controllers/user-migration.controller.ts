@@ -35,10 +35,8 @@ export class UserMigrationController {
       );
     }
 
-    // Ejecutar migración y devolver solo el resultado
     const result = await this.userMigrationService.migrateUsers(payload.users);
 
-    // Devolver solo el resultado sin wrapper de success/message
     return result;
   }
 }
