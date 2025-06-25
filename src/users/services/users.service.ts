@@ -379,6 +379,36 @@ export class UsersService {
       .exec();
   }
 
+  async findByEmailMS(email: string): Promise<{
+    id: string;
+    email: string;
+    fullName: string;
+  } | null> {
+    try {
+      const user = await this.userModel
+        .findOne({
+          email: email.toLowerCase(),
+        })
+        .select('email personalInfo')
+        .exec();
+
+      if (!user) {
+        return null;
+      }
+
+      // Transformar la respuesta
+      return {
+        id: (user._id as Types.ObjectId).toString(),
+        email: user.email,
+        fullName: user.personalInfo
+          ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+          : 'Usuario sin nombre',
+      };
+    } catch (error) {
+      this.logger.error(`Error buscando usuario por email ${email}:`, error);
+      return null;
+    }
+  }
   async findByReferralCode(code: string): Promise<UserDocument | null> {
     return this.userModel
       .findOne({

@@ -17,6 +17,11 @@ export class UsersController {
     return this.usersService.findByEmail(data.email);
   }
 
+  @MessagePattern({ cmd: 'user.findByEmailMS' })
+  findByEmailMS(@Payload() data: { email: string }) {
+    return this.usersService.findByEmailMS(data.email);
+  }
+
   @MessagePattern({ cmd: 'user.findByEmailWithPassword' })
   findByEmailWithPassword(@Payload() data: { email: string }) {
     return this.usersService.findByEmailWithPassword(data.email);
