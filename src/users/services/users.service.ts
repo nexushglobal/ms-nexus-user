@@ -338,7 +338,54 @@ export class UsersService {
     `;
   }
 
-  // ... resto de métodos existentes sin cambios
+  async getUserDetailedInfo(userId: string): Promise<{
+    id: string;
+    email: string;
+    fullName: string;
+    phone?: string;
+    documentNumber?: string;
+  } | null> {
+    try {
+      if (!Types.ObjectId.isValid(userId)) {
+        return null;
+      }
+
+      this.logger.log(
+        `👤 Obteniendo información detallada del usuario: ${userId}`,
+      );
+
+      const user = await this.userModel
+        .findById(userId)
+        .select('email personalInfo contactInfo')
+        .exec();
+
+      if (!user) {
+        return null;
+      }
+
+      const result = {
+        id: (user._id as Types.ObjectId).toString(),
+        email: user.email,
+        fullName: user.personalInfo
+          ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+          : 'Usuario sin nombre',
+        phone: user.contactInfo?.phone,
+        documentNumber: user.personalInfo?.documentNumber,
+      };
+
+      this.logger.log(
+        `✅ Información detallada obtenida para usuario: ${userId}`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo información detallada del usuario ${userId}:`,
+        error,
+      );
+      return null;
+    }
+  }
   private async generateUniqueReferralCode(): Promise<string> {
     let referralCode: string;
     let attempts = 0;
@@ -496,25 +543,110 @@ export class UsersService {
       },
     };
   }
+  async getUsersInfoBatch(userIds: string[]): Promise<{
+    [userId: string]: {
+      id: string;
+      email: string;
+      fullName: string;
+      documentNumber?: string;
+    };
+  }> {
+    try {
+      if (!userIds || userIds.length === 0) {
+        return {};
+      }
+
+      this.logger.log(
+        `👥 Obteniendo información en lote de ${userIds.length} usuarios`,
+      );
+
+      // Filtrar IDs válidos
+      const validUserIds = userIds.filter((id) => Types.ObjectId.isValid(id));
+
+      if (validUserIds.length === 0) {
+        return {};
+      }
+
+      const users = await this.userModel
+        .find({
+          _id: { $in: validUserIds.map((id) => new Types.ObjectId(id)) },
+        })
+        .select('email personalInfo')
+        .exec();
+
+      const result: {
+        [userId: string]: {
+          id: string;
+          email: string;
+          fullName: string;
+          documentNumber?: string;
+        };
+      } = {};
+
+      users.forEach((user) => {
+        const userId = (user._id as Types.ObjectId).toString();
+        result[userId] = {
+          id: userId,
+          email: user.email,
+          fullName: user.personalInfo
+            ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+            : 'Usuario sin nombre',
+          documentNumber: user.personalInfo?.documentNumber,
+        };
+      });
+
+      this.logger.log(
+        `✅ Información obtenida para ${users.length} de ${userIds.length} usuarios solicitados`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo información de usuarios en lote:`,
+        error,
+      );
+      return {};
+    }
+  }
 
   async findPrincipalUser() {
-    const user = await this.userModel
-      .findOne({
-        parent: null,
-        'role.code': 'CLI',
-      })
-      .populate('role')
-      .select('+password')
-      .exec();
+    try {
+      //cesar.huertas@inmobiliariahuertas.com
+      const principalUser = await this.userModel
+        .findOne({
+          email: 'cesar.huertas@inmobiliariahuertas.com',
+        })
+        .populate({
+          path: 'role',
+          match: { code: 'CLI', isActive: true },
+        })
+        .exec();
 
-    if (!user) {
+      if (!principalUser || !principalUser.role) {
+        this.logger.warn('❌ Usuario principal no encontrado');
+        return null;
+      }
+
+      const result = {
+        id: (principalUser._id as Types.ObjectId).toString(),
+        email: principalUser.email,
+        firstName: principalUser.personalInfo?.firstName || '',
+        lastName: principalUser.personalInfo?.lastName || '',
+        role: {
+          id: (principalUser.role as any)._id.toString(),
+          code: (principalUser.role as any).code,
+          name: (principalUser.role as any).name,
+        },
+      };
+
+      this.logger.log(
+        `✅ Usuario principal encontrado: ${principalUser.email}`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error('❌ Error buscando usuario principal:', error);
       return null;
     }
-
-    return {
-      id: (user._id as Types.ObjectId).toString(),
-      email: user.email,
-    };
   }
 
   async updateLastLoginAt(userId: string) {

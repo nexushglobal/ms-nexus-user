@@ -21,7 +21,14 @@ export class UsersController {
   findByEmailMS(@Payload() data: { email: string }) {
     return this.usersService.findByEmailMS(data.email);
   }
-
+  @MessagePattern({ cmd: 'user.getUsersInfoBatch' })
+  getUsersInfoBatch(@Payload() data: { userIds: string[] }) {
+    return this.usersService.getUsersInfoBatch(data.userIds);
+  }
+  @MessagePattern({ cmd: 'user.getUserDetailedInfo' })
+  getUserDetailedInfo(@Payload() data: { userId: string }) {
+    return this.usersService.getUserDetailedInfo(data.userId);
+  }
   @MessagePattern({ cmd: 'user.findByEmailWithPassword' })
   findByEmailWithPassword(@Payload() data: { email: string }) {
     return this.usersService.findByEmailWithPassword(data.email);
