@@ -89,4 +89,9 @@ export class UsersController {
       data.newPassword,
     );
   }
+
+  @MessagePattern({ cmd: 'user.getCustomerInfo' })
+  getCustomerInfo(@Payload() data: { userId: string }) {
+    return this.usersService.getCustomerInfo(data.userId);
+  }
 }

@@ -4,7 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 import { Model, Types } from 'mongoose';
 import { firstValueFrom } from 'rxjs';
-import { NATS_SERVICE } from 'src/config/services';
+import { NATS_SERVICE, PAYMENT_SERVICE } from 'src/config/services';
 import { v4 as uuidv4 } from 'uuid';
 import { Role, RoleDocument } from '../../roles/schemas/roles.schema';
 import { View, ViewDocument } from '../../views/schemas/views.schema';
@@ -26,6 +26,7 @@ export class UsersService {
     @InjectModel(Role.name) private roleModel: Model<RoleDocument>,
     @InjectModel(View.name) private viewModel: Model<ViewDocument>,
     @Inject(NATS_SERVICE) private readonly client: ClientProxy,
+    @Inject(PAYMENT_SERVICE) private readonly paymentsClient: ClientProxy,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -288,20 +289,20 @@ export class UsersService {
       </head>
       <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
         <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          
+
           <div style="text-align: center; margin-bottom: 30px;">
             <h1 style="color: #2c3e50; margin: 0; font-size: 28px;">¡Bienvenido! 🎉</h1>
           </div>
-          
+
           <div style="margin-bottom: 30px;">
             <p style="font-size: 16px; color: #333; line-height: 1.6;">
               Hola <strong>${firstName}</strong>,
             </p>
-            
+
             <p style="font-size: 16px; color: #333; line-height: 1.6;">
               ¡Gracias por unirte a nuestra plataforma! Tu cuenta ha sido creada exitosamente.
             </p>
-            
+
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
               <h3 style="color: #28a745; margin-top: 0;">Información de tu cuenta:</h3>
               <ul style="color: #333; line-height: 1.8;">
@@ -310,7 +311,7 @@ export class UsersService {
                 <li><strong>Fecha de registro:</strong> ${new Date().toLocaleDateString('es-ES')}</li>
               </ul>
             </div>
-            
+
             <div style="background-color: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
               <h3 style="color: #2c3e50; margin-top: 0;">Tu código de referido:</h3>
               <div style="background-color: #28a745; color: white; padding: 15px; border-radius: 8px; font-size: 20px; font-weight: bold; letter-spacing: 2px; margin: 10px 0;">
@@ -320,14 +321,14 @@ export class UsersService {
                 Comparte este código con tus amigos para que puedan unirse a tu red
               </p>
             </div>
-            
+
             <div style="text-align: center; margin: 30px 0;">
               <a href="http://localhost:3000/login" style="background-color: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
                 Iniciar Sesión
               </a>
             </div>
           </div>
-          
+
           <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; text-align: center; color: #999; font-size: 12px;">
             <p>Este es un correo automático, por favor no respondas.</p>
             <p style="margin: 5px 0;">© ${new Date().getFullYear()} Nuestra Plataforma. Todos los derechos reservados.</p>
@@ -344,6 +345,12 @@ export class UsersService {
     fullName: string;
     phone?: string;
     documentNumber?: string;
+    documentType?: string;
+    firstName?: string;
+    lastName?: string;
+    address?: string;
+    address_city?: string;
+    country_code?: string;
   } | null> {
     try {
       if (!Types.ObjectId.isValid(userId)) {
@@ -371,6 +378,12 @@ export class UsersService {
           : 'Usuario sin nombre',
         phone: user.contactInfo?.phone,
         documentNumber: user.personalInfo?.documentNumber,
+        documentType: user.personalInfo?.documentType,
+        firstName: user.personalInfo?.firstName,
+        lastName: user.personalInfo?.lastName,
+        address: user.contactInfo?.address,
+        address_city: user.contactInfo?.address_city,
+        country_code: user.contactInfo?.country_code,
       };
 
       this.logger.log(
@@ -839,5 +852,45 @@ export class UsersService {
         message: 'Error interno del servidor al cambiar la contraseña',
       });
     }
+  }
+
+  async getCustomerInfo(userId: string) {
+    this.logger.log(`Getting customer info for user: ${userId}`);
+
+    try {
+      const culqiCustomer = await firstValueFrom(
+        this.paymentsClient.send({ cmd: 'culqi.getCustomer' }, { userId }),
+      );
+
+      if (culqiCustomer) {
+        this.logger.log(
+          `Customer found in payments service for user: ${userId}`,
+        );
+        return culqiCustomer;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Customer not found in payments service for user: ${userId}`,
+        error.message,
+      );
+    }
+
+    const user = await this.getUserDetailedInfo(userId);
+    return {
+      userId,
+      defaultData: {
+        email: user?.email,
+        firstName: user?.firstName,
+        lastName: user?.lastName,
+        address: user?.address,
+        address_city: user?.address_city,
+        country_code: user?.country_code,
+        phone: user?.phone,
+        metadata: {
+          documentType: user?.documentType,
+          documentNumber: user?.documentNumber,
+        },
+      },
+    };
   }
 }

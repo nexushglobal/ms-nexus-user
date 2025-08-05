@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
-import { UsersModule } from './users/users.module';
-import { envs } from './config/envs';
-import { ViewsModule } from './views/views.module';
-import { RolesModule } from './roles/roles.module';
 import { MongooseModule } from '@nestjs/mongoose';
-import { MigrationModule } from './migration/migration.module';
+import { envs } from './config/envs';
+import { RolesModule } from './roles/roles.module';
+import { UsersModule } from './users/users.module';
+import { ViewsModule } from './views/views.module';
 
 @Module({
   imports: [
@@ -17,7 +16,6 @@ import { MigrationModule } from './migration/migration.module';
     UsersModule,
     ViewsModule,
     RolesModule,
-    MigrationModule,
   ],
 })
 export class AppModule {}

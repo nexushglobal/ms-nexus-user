@@ -93,6 +93,18 @@ export class ContactInfo {
     maxlength: 100,
   })
   country: string;
+
+  @Prop({
+    trim: true,
+    maxlength: 100,
+  })
+  address_city?: string;
+
+  @Prop({
+    trim: true,
+    maxlength: 100,
+  })
+  country_code?: string;
 }
 
 export const ContactInfoSchema = SchemaFactory.createForClass(ContactInfo);
