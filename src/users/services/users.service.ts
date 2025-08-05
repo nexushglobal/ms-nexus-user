@@ -95,7 +95,12 @@ export class UsersService {
           lastName: registerDto.lastName,
           documentType: registerDto.documentType.toUpperCase() as DocumentType,
           documentNumber: registerDto.documentNumber,
-          gender: registerDto.gender as Gender,
+          gender:
+            registerDto.gender === 'MASCULINO'
+              ? Gender.MASCULINO
+              : registerDto.gender === 'FEMENINO'
+                ? Gender.FEMENINO
+                : Gender.OTRO,
           birthdate: new Date(registerDto.birthDate),
         },
         contactInfo: {
@@ -131,6 +136,10 @@ export class UsersService {
         },
       };
     } catch (error) {
+      this.logger.error(
+        `❌ Error registrando usuario: ${error.message}`,
+        error.stack,
+      );
       if (error instanceof RpcException) {
         throw error;
       }
