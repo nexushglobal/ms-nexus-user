@@ -411,6 +411,7 @@ export class UsersService {
   }
 
   async findById(id: string): Promise<UserDocument | null> {
+    console.log('ID recibido:', id);
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }

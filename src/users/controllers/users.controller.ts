@@ -39,6 +39,11 @@ export class UsersController {
     return this.usersService.findById(data.id);
   }
 
+  @MessagePattern({ cmd: 'user.findByReferralCode' })
+  findByReferralCode(@Payload() data: { code: string }) {
+    return this.usersService.findByReferralCode(data.code);
+  }
+
   @MessagePattern({ cmd: 'user.findUserWithRoleById' })
   findUserWithRoleById(@Payload() data: { id: string }) {
     return this.usersService.findUserWithRoleById(data.id);
