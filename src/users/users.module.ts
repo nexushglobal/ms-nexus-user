@@ -2,7 +2,11 @@ import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { MongooseModule } from '@nestjs/mongoose';
 import { envs } from 'src/config/envs';
-import { NATS_SERVICE, PAYMENT_SERVICE } from 'src/config/services';
+import {
+  MEMBERSHIP_SERVICE,
+  NATS_SERVICE,
+  PAYMENT_SERVICE,
+} from 'src/config/services';
 import { Role, RoleSchema } from '../roles/schemas/roles.schema';
 import { View, ViewSchema } from '../views/schemas/views.schema';
 import { PasswordResetController } from './controllers/password-reset.controller';
@@ -49,6 +53,13 @@ import { UsersService } from './services/users.service';
       },
       {
         name: PAYMENT_SERVICE,
+        transport: Transport.NATS,
+        options: {
+          servers: envs.NATS_SERVERS,
+        },
+      },
+      {
+        name: MEMBERSHIP_SERVICE,
         transport: Transport.NATS,
         options: {
           servers: envs.NATS_SERVERS,

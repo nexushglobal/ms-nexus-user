@@ -4,11 +4,18 @@ import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 import { Model, Types } from 'mongoose';
 import { firstValueFrom } from 'rxjs';
-import { NATS_SERVICE, PAYMENT_SERVICE } from 'src/config/services';
+import {
+  MEMBERSHIP_SERVICE,
+  NATS_SERVICE,
+  PAYMENT_SERVICE,
+} from 'src/config/services';
 import { v4 as uuidv4 } from 'uuid';
 import { Role, RoleDocument } from '../../roles/schemas/roles.schema';
 import { View, ViewDocument } from '../../views/schemas/views.schema';
-import { RegisterDto } from '../dto/create-user.dto';
+import {
+  MembershipResponse,
+  ReferrerMembershipResponse,
+} from '../interfaces/membership-response.interface';
 import {
   DocumentType,
   Gender,
@@ -16,6 +23,7 @@ import {
   User,
   UserDocument,
 } from '../schemas/user.schema';
+import { TreeService } from './tree.service';
 
 @Injectable()
 export class UsersService {
@@ -27,9 +35,33 @@ export class UsersService {
     @InjectModel(View.name) private viewModel: Model<ViewDocument>,
     @Inject(NATS_SERVICE) private readonly client: ClientProxy,
     @Inject(PAYMENT_SERVICE) private readonly paymentsClient: ClientProxy,
+    @Inject(MEMBERSHIP_SERVICE) private readonly membershipClient: ClientProxy,
+    private readonly treeService: TreeService,
   ) {}
 
-  async register(registerDto: RegisterDto) {
+  async register(registerDto: {
+    email: string;
+    password: string;
+
+    // Datos personales
+    firstName: string;
+    lastName: string;
+    phone: string;
+    birthDate: string;
+    gender: string;
+
+    // Ubicación
+
+    country: string;
+
+    // Sistema de referidos
+
+    referrerCode?: string;
+    position?: 'LEFT' | 'RIGHT';
+    roleCode: string;
+    documentType: string;
+    documentNumber: string;
+  }) {
     try {
       // Validaciones existentes
       const existingEmail = await this.userModel.findOne({
@@ -80,6 +112,8 @@ export class UsersService {
         assignedPosition = position;
       }
 
+      this.logger.log(`👤 Usuario registrado: ${JSON.stringify(registerDto)}`);
+
       // Crear nuevo usuario
       const newUser = new this.userModel({
         email: registerDto.email.toLowerCase(),
@@ -95,12 +129,9 @@ export class UsersService {
           lastName: registerDto.lastName,
           documentType: registerDto.documentType.toUpperCase() as DocumentType,
           documentNumber: registerDto.documentNumber,
+          //tranformar de MASCULINO a Masculino
           gender:
-            registerDto.gender === 'MASCULINO'
-              ? Gender.MASCULINO
-              : registerDto.gender === 'FEMENINO'
-                ? Gender.FEMENINO
-                : Gender.OTRO,
+            Gender[registerDto.gender.toUpperCase() as keyof typeof Gender],
           birthdate: new Date(registerDto.birthDate),
         },
         contactInfo: {
@@ -901,5 +932,231 @@ export class UsersService {
         },
       },
     };
+  }
+
+  /**
+   * Obtiene la información de membresía del referido padre de un usuario
+   * @param userId - ID del usuario del cual queremos obtener la membresía del padre
+   * @returns Información de la membresía del referido padre
+   */
+  async getReferrerMembership(
+    userId: string,
+  ): Promise<ReferrerMembershipResponse> {
+    try {
+      this.logger.log(
+        `🔍 Buscando membresía del referido padre para usuario: ${userId}`,
+      );
+
+      // Validar que el userId sea válido
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return {
+          hasReferrer: false,
+          referrerMembership: null,
+          message: 'ID de usuario inválido',
+        };
+      }
+
+      // 1. Buscar al usuario y obtener su referrerCode
+      const user = await this.userModel
+        .findById(userId)
+        .select('referrerCode personalInfo.firstName personalInfo.lastName')
+        .exec();
+
+      if (!user) {
+        this.logger.warn(`❌ Usuario no encontrado: ${userId}`);
+        return {
+          hasReferrer: false,
+          referrerMembership: null,
+          message: 'Usuario no encontrado',
+        };
+      }
+
+      if (!user.referrerCode) {
+        this.logger.log(
+          `ℹ️ Usuario ${userId} no tiene código de referido padre`,
+        );
+        return {
+          hasReferrer: false,
+          referrerMembership: null,
+          message: 'El usuario no tiene un referido padre',
+        };
+      }
+
+      this.logger.log(
+        `📋 Usuario encontrado. ReferrerCode: ${user.referrerCode}`,
+      );
+
+      // 2. Buscar al usuario padre mediante el referrerCode
+      const referrerUser = await this.userModel
+        .findOne({
+          referralCode: user.referrerCode,
+          isActive: true,
+        })
+        .select('_id personalInfo.firstName personalInfo.lastName email')
+        .exec();
+
+      if (!referrerUser) {
+        this.logger.warn(
+          `❌ Usuario referido padre no encontrado con código: ${user.referrerCode}`,
+        );
+        return {
+          hasReferrer: false,
+          referrerMembership: null,
+          message: `Usuario referido padre no encontrado con código: ${user.referrerCode}`,
+        };
+      }
+
+      const referrerId = (referrerUser._id as Types.ObjectId).toString();
+      this.logger.log(`👤 Referido padre encontrado: ${referrerId}`);
+
+      // 3. Consumir el servicio externo para obtener la membresía del padre
+      const membershipResponse: MembershipResponse = await firstValueFrom(
+        this.membershipClient.send(
+          { cmd: 'membership.getUserMembershipByUserId' },
+          { userId: referrerId },
+        ),
+      );
+
+      this.logger.log(
+        `📄 Respuesta del servicio de membresía: ${JSON.stringify(membershipResponse)}`,
+      );
+
+      // 4. Retornar la información de la membresía del padre
+      const result: ReferrerMembershipResponse = {
+        hasReferrer: true,
+        referrerMembership: membershipResponse,
+        message: membershipResponse.hasActiveMembership
+          ? 'Membresía del referido padre obtenida exitosamente'
+          : 'El referido padre no tiene membresía activa',
+      };
+
+      this.logger.log(
+        `✅ Membresía del referido padre procesada para usuario: ${userId}`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo membresía del referido padre para usuario ${userId}:`,
+        error,
+      );
+
+      // Si es un error del servicio de membresía, intentamos manejar la respuesta
+      if (error.message && typeof error.message === 'string') {
+        return {
+          hasReferrer: false,
+          referrerMembership: null,
+          message: `Error al consultar membresía: ${error.message}`,
+        };
+      }
+
+      return {
+        hasReferrer: false,
+        referrerMembership: null,
+        message:
+          'Error interno del servidor al obtener la membresía del referido padre',
+      };
+    }
+  }
+
+  /**
+   * Obtiene todos los usuarios superiores en la jerarquía binaria con membresía activa
+   * @param userId - ID del usuario base
+   * @returns Array de usuarios superiores con membresía activa
+   */
+  async getActiveAncestorsWithMembership(userId: string): Promise<
+    {
+      userId: string;
+      userName: string;
+      userEmail: string;
+      site: 'LEFT' | 'RIGHT';
+    }[]
+  > {
+    try {
+      this.logger.log(
+        `🔍 Obteniendo ancestros con membresía activa para usuario: ${userId}`,
+      );
+
+      // Validar que el userId sea válido
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        throw new RpcException({
+          status: 400,
+          message: 'ID de usuario inválido',
+        });
+      }
+
+      // 1. Obtener todos los usuarios superiores en la jerarquía
+      const ancestors = await this.treeService.getUserAncestors(userId);
+
+      if (ancestors.length === 0) {
+        this.logger.log(
+          `ℹ️ Usuario ${userId} no tiene ancestros en la jerarquía`,
+        );
+        return [];
+      }
+
+      this.logger.log(
+        `📋 Encontrados ${ancestors.length} ancestros para el usuario ${userId}`,
+      );
+
+      // 2. Preparar array de userIds para consultar membresías
+      const userIds = ancestors.map((ancestor) => ({
+        userId: ancestor.userId,
+      }));
+
+      // 3. Consultar el servicio de membresías para verificar cuáles tienen membresía activa
+      this.logger.log(
+        `📞 Consultando membresías activas para ${userIds.length} usuarios`,
+      );
+
+      const membershipResponse = await firstValueFrom(
+        this.membershipClient.send(
+          { cmd: 'membership.checkUserActiveMembership' },
+          { users: userIds },
+        ),
+      );
+
+      this.logger.log(
+        `📄 Respuesta del servicio de membresías: ${JSON.stringify(membershipResponse)}`,
+      );
+
+      // 4. Filtrar solo los usuarios que tienen membresía activa
+      const activeMembershipResults: Array<{
+        userId: string;
+        active: boolean;
+      }> = membershipResponse?.results || [];
+
+      const activeMembershipUserIds = new Set(
+        activeMembershipResults
+          .filter((result) => result.active)
+          .map((result) => result.userId),
+      );
+
+      const activeAncestorsWithMembership = ancestors.filter((ancestor) =>
+        activeMembershipUserIds.has(ancestor.userId),
+      );
+
+      this.logger.log(
+        `✅ Encontrados ${activeAncestorsWithMembership.length} ancestros con membresía activa para usuario: ${userId}`,
+      );
+
+      return activeAncestorsWithMembership;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo ancestros con membresía activa para usuario ${userId}:`,
+        error,
+      );
+
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
+      throw new RpcException({
+        status: 500,
+        message:
+          'Error interno del servidor al obtener ancestros con membresía activa',
+      });
+    }
   }
 }

@@ -2,15 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument } from '../schemas/user.schema';
 import {
   TreeNode,
-  TreeResponse,
-  TreeSearchResult,
-  TreeSearchResponse,
   TreeQueryParams,
+  TreeResponse,
   TreeSearchParams,
+  TreeSearchResponse,
+  TreeSearchResult,
 } from '../interfaces/tree.interface';
+import { User, UserDocument } from '../schemas/user.schema';
 
 // Interfaces para agregación
 interface UserAggregationResult {
@@ -620,5 +620,119 @@ export class TreeService {
     if (rootIndex === -1) return [];
 
     return path.slice(rootIndex).map((id: Types.ObjectId) => id.toString());
+  }
+
+  /**
+   * Obtiene todos los usuarios superiores en la jerarquía binaria de un usuario
+   * @param userId - ID del usuario base
+   * @returns Array de usuarios superiores con su información básica y posición
+   */
+  async getUserAncestors(userId: string): Promise<
+    {
+      userId: string;
+      userName: string;
+      userEmail: string;
+      site: 'LEFT' | 'RIGHT';
+    }[]
+  > {
+    try {
+      this.logger.log(`🔍 Obteniendo ancestros para usuario: ${userId}`);
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return [];
+      }
+
+      // Verificar que el usuario existe
+      const targetUser = await this.userModel.findById(userId).exec();
+      if (!targetUser) {
+        this.logger.warn(`❌ Usuario no encontrado: ${userId}`);
+        return [];
+      }
+
+      // Usar aggregation para obtener todos los ancestros con GraphLookup
+      const pipeline = [
+        {
+          $match: {
+            _id: new Types.ObjectId(userId),
+          },
+        },
+        {
+          $graphLookup: {
+            from: 'users',
+            startWith: '$parent',
+            connectFromField: 'parent',
+            connectToField: '_id',
+            as: 'ancestors',
+            // Sin maxDepth para obtener toda la jerarquía
+          },
+        },
+        {
+          $project: {
+            ancestors: {
+              $map: {
+                input: '$ancestors',
+                as: 'ancestor',
+                in: {
+                  _id: '$$ancestor._id',
+                  email: '$$ancestor.email',
+                  personalInfo: '$$ancestor.personalInfo',
+                  position: '$$ancestor.position',
+                  isActive: '$$ancestor.isActive',
+                },
+              },
+            },
+          },
+        },
+      ];
+
+      interface AncestorResult {
+        ancestors: {
+          _id: Types.ObjectId;
+          email: string;
+          personalInfo?: {
+            firstName: string;
+            lastName: string;
+          };
+          position?: 'LEFT' | 'RIGHT';
+          isActive: boolean;
+        }[];
+      }
+
+      const result = await this.userModel
+        .aggregate<AncestorResult>(pipeline)
+        .exec();
+
+      if (result.length === 0 || !result[0].ancestors) {
+        this.logger.log(`ℹ️ Usuario ${userId} no tiene ancestros`);
+        return [];
+      }
+
+      const ancestors = result[0].ancestors;
+
+      // Filtrar solo usuarios activos y mapear al formato requerido
+      const ancestorsData = ancestors
+        .filter((ancestor) => ancestor.isActive && ancestor.position)
+        .map((ancestor) => ({
+          userId: ancestor._id.toString(),
+          userName: ancestor.personalInfo
+            ? `${ancestor.personalInfo.firstName} ${ancestor.personalInfo.lastName}`.trim()
+            : 'Usuario sin nombre',
+          userEmail: ancestor.email,
+          site: ancestor.position as 'LEFT' | 'RIGHT',
+        }));
+
+      this.logger.log(
+        `✅ Encontrados ${ancestorsData.length} ancestros activos para usuario: ${userId}`,
+      );
+
+      return ancestorsData;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo ancestros para usuario ${userId}:`,
+        error,
+      );
+      return [];
+    }
   }
 }

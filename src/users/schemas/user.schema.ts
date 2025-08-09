@@ -10,9 +10,9 @@ export enum DocumentType {
 }
 
 export enum Gender {
-  MASCULINO = 'MASCULINO',
-  FEMENINO = 'FEMENINO',
-  OTRO = 'OTRO',
+  MASCULINO = 'Masculino',
+  FEMENINO = 'Femenino',
+  OTRO = 'Otro',
 }
 
 export enum Position {
