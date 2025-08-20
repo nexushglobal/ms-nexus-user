@@ -1159,4 +1159,68 @@ export class UsersService {
       });
     }
   }
+
+  async getUserWithdrawalInfo(userId: string) {
+    try {
+      this.logger.log(
+        `🔍 Obteniendo información de retiro para usuario: ${userId}`,
+      );
+
+      if (!Types.ObjectId.isValid(userId)) {
+        throw new RpcException({
+          status: 400,
+          message: 'ID de usuario inválido',
+        });
+      }
+
+      const user = await this.userModel
+        .findById(userId)
+        .select('email personalInfo contactInfo billingInfo bankInfo')
+        .exec();
+
+      if (!user) {
+        throw new RpcException({
+          status: 404,
+          message: 'Usuario no encontrado',
+        });
+      }
+
+      const result = {
+        userId: (user._id as Types.ObjectId).toString(),
+        userName: user.personalInfo
+          ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+          : '',
+        userEmail: user.email,
+        documentType: user.personalInfo?.documentType || '',
+        documentNumber: user.personalInfo?.documentNumber || '',
+        ruc: user.billingInfo?.ruc || '',
+        razonSocial: user.billingInfo?.razonSocial || '',
+        address: user.billingInfo?.address || user.contactInfo?.address || '',
+        bankName: user.bankInfo?.bankName || '',
+        accountNumber: user.bankInfo?.accountNumber || '',
+        cci: user.bankInfo?.cci || '',
+        phone: user.contactInfo?.phone || '',
+      };
+
+      this.logger.log(
+        `✅ Información de retiro obtenida para usuario: ${userId}`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo información de retiro para usuario ${userId}:`,
+        error,
+      );
+
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
+      throw new RpcException({
+        status: 500,
+        message:
+          'Error interno del servidor al obtener información del usuario',
+      });
+    }
+  }
 }

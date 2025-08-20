@@ -1,10 +1,10 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { TreeService } from '../services/tree.service';
 import {
   TreeQueryParams,
   TreeSearchParams,
 } from '../interfaces/tree.interface';
+import { TreeService } from '../services/tree.service';
 
 @Controller()
 export class TreeController {
@@ -20,5 +20,20 @@ export class TreeController {
     console.log('data query:', data);
 
     return await this.treeService.searchUsersInTree(data);
+  }
+
+  @MessagePattern({ cmd: 'user.tree.checkMinDepthLevels' })
+  async checkMinDepthLevels(
+    @Payload() data: { userId: string; minDepthLevels: number },
+  ) {
+    return await this.treeService.checkMinDepthLevels(
+      data.userId,
+      data.minDepthLevels,
+    );
+  }
+
+  @MessagePattern({ cmd: 'user.tree.getDirectReferrals' })
+  async getDirectReferrals(@Payload() data: { userId: string }) {
+    return await this.treeService.getDirectReferrals(data.userId);
   }
 }

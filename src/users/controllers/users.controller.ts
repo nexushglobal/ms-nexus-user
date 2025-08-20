@@ -128,4 +128,9 @@ export class UsersController {
   getActiveAncestorsWithMembership(@Payload() data: { userId: string }) {
     return this.usersService.getActiveAncestorsWithMembership(data.userId);
   }
+
+  @MessagePattern({ cmd: 'user.getUserWithdrawalInfo' })
+  getUserWithdrawalInfo(@Payload() data: { userId: string }) {
+    return this.usersService.getUserWithdrawalInfo(data.userId);
+  }
 }
