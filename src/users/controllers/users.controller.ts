@@ -1,6 +1,5 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
-import { RegisterDto } from '../dto/create-user.dto';
 import { UsersService } from '../services/users.service';
 
 @Controller()
@@ -8,7 +7,32 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @MessagePattern({ cmd: 'user.register' })
-  register(@Payload() registerDto: RegisterDto) {
+  register(
+    @Payload()
+    registerDto: {
+      email: string;
+      password: string;
+
+      // Datos personales
+      firstName: string;
+      lastName: string;
+      phone: string;
+      birthDate: string;
+      gender: string;
+
+      // Ubicación
+
+      country: string;
+
+      // Sistema de referidos
+
+      referrerCode?: string;
+      position?: 'LEFT' | 'RIGHT';
+      roleCode: string;
+      documentType: string;
+      documentNumber: string;
+    },
+  ) {
     return this.usersService.register(registerDto);
   }
 
@@ -93,5 +117,20 @@ export class UsersController {
   @MessagePattern({ cmd: 'user.getCustomerInfo' })
   getCustomerInfo(@Payload() data: { userId: string }) {
     return this.usersService.getCustomerInfo(data.userId);
+  }
+
+  @MessagePattern({ cmd: 'user.getReferrerMembership' })
+  getReferrerMembership(@Payload() data: { userId: string }) {
+    return this.usersService.getReferrerMembership(data.userId);
+  }
+
+  @MessagePattern({ cmd: 'user.getActiveAncestorsWithMembership' })
+  getActiveAncestorsWithMembership(@Payload() data: { userId: string }) {
+    return this.usersService.getActiveAncestorsWithMembership(data.userId);
+  }
+
+  @MessagePattern({ cmd: 'user.getUserWithdrawalInfo' })
+  getUserWithdrawalInfo(@Payload() data: { userId: string }) {
+    return this.usersService.getUserWithdrawalInfo(data.userId);
   }
 }

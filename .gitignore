@@ -14,11 +14,11 @@ lerna-debug.log*
 
 # OS
 .DS_Store
-
+pront.txt
 # Tests
 /coverage
 /.nyc_output
-
+/docs
 # IDEs and editors
 /.idea
 .project

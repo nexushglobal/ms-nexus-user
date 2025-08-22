@@ -2,15 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument } from '../schemas/user.schema';
 import {
   TreeNode,
-  TreeResponse,
-  TreeSearchResult,
-  TreeSearchResponse,
   TreeQueryParams,
+  TreeResponse,
   TreeSearchParams,
+  TreeSearchResponse,
+  TreeSearchResult,
 } from '../interfaces/tree.interface';
+import { User, UserDocument } from '../schemas/user.schema';
 
 // Interfaces para agregación
 interface UserAggregationResult {
@@ -620,5 +620,273 @@ export class TreeService {
     if (rootIndex === -1) return [];
 
     return path.slice(rootIndex).map((id: Types.ObjectId) => id.toString());
+  }
+
+  /**
+   * Obtiene todos los usuarios superiores en la jerarquía binaria de un usuario
+   * @param userId - ID del usuario base
+   * @returns Array de usuarios superiores con su información básica y posición
+   */
+  async getUserAncestors(userId: string): Promise<
+    {
+      userId: string;
+      userName: string;
+      userEmail: string;
+      site: 'LEFT' | 'RIGHT';
+    }[]
+  > {
+    try {
+      this.logger.log(`🔍 Obteniendo ancestros para usuario: ${userId}`);
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return [];
+      }
+
+      // Verificar que el usuario existe
+      const targetUser = await this.userModel.findById(userId).exec();
+      if (!targetUser) {
+        this.logger.warn(`❌ Usuario no encontrado: ${userId}`);
+        return [];
+      }
+
+      // Usar aggregation para obtener todos los ancestros con GraphLookup
+      const pipeline = [
+        {
+          $match: {
+            _id: new Types.ObjectId(userId),
+          },
+        },
+        {
+          $graphLookup: {
+            from: 'users',
+            startWith: '$parent',
+            connectFromField: 'parent',
+            connectToField: '_id',
+            as: 'ancestors',
+            // Sin maxDepth para obtener toda la jerarquía
+          },
+        },
+        {
+          $project: {
+            ancestors: {
+              $map: {
+                input: '$ancestors',
+                as: 'ancestor',
+                in: {
+                  _id: '$$ancestor._id',
+                  email: '$$ancestor.email',
+                  personalInfo: '$$ancestor.personalInfo',
+                  position: '$$ancestor.position',
+                  isActive: '$$ancestor.isActive',
+                },
+              },
+            },
+          },
+        },
+      ];
+
+      interface AncestorResult {
+        ancestors: {
+          _id: Types.ObjectId;
+          email: string;
+          personalInfo?: {
+            firstName: string;
+            lastName: string;
+          };
+          position?: 'LEFT' | 'RIGHT';
+          isActive: boolean;
+        }[];
+      }
+
+      const result = await this.userModel
+        .aggregate<AncestorResult>(pipeline)
+        .exec();
+
+      if (result.length === 0 || !result[0].ancestors) {
+        this.logger.log(`ℹ️ Usuario ${userId} no tiene ancestros`);
+        return [];
+      }
+
+      const ancestors = result[0].ancestors;
+
+      // Filtrar solo usuarios activos y mapear al formato requerido
+      const ancestorsData = ancestors
+        .filter((ancestor) => ancestor.isActive && ancestor.position)
+        .map((ancestor) => ({
+          userId: ancestor._id.toString(),
+          userName: ancestor.personalInfo
+            ? `${ancestor.personalInfo.firstName} ${ancestor.personalInfo.lastName}`.trim()
+            : 'Usuario sin nombre',
+          userEmail: ancestor.email,
+          site: ancestor.position as 'LEFT' | 'RIGHT',
+        }));
+
+      this.logger.log(
+        `✅ Encontrados ${ancestorsData.length} ancestros activos para usuario: ${userId}`,
+      );
+
+      return ancestorsData;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo ancestros para usuario ${userId}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Verifica si un usuario cumple con el requisito de niveles mínimos de profundidad
+   * @param userId - ID del usuario a verificar
+   * @param minDepthLevels - Número mínimo de niveles requeridos
+   * @returns boolean indicando si cumple con el requisito
+   */
+  async checkMinDepthLevels(
+    userId: string,
+    minDepthLevels: number,
+  ): Promise<boolean> {
+    try {
+      this.logger.log(
+        `🔍 Verificando profundidad mínima (${minDepthLevels}) para usuario: ${userId}`,
+      );
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return false;
+      }
+
+      if (minDepthLevels <= 0) {
+        this.logger.log(
+          `✅ Niveles mínimos es 0 o menor, automáticamente cumplido`,
+        );
+        return true;
+      }
+
+      // Verificar que el usuario existe
+      const targetUser = await this.userModel.findById(userId).exec();
+      if (!targetUser) {
+        this.logger.warn(`❌ Usuario no encontrado: ${userId}`);
+        return false;
+      }
+
+      // Usar aggregation para obtener la profundidad máxima del árbol del usuario
+      const pipeline = [
+        {
+          $match: {
+            _id: new Types.ObjectId(userId),
+          },
+        },
+        {
+          $graphLookup: {
+            from: 'users',
+            startWith: '$_id',
+            connectFromField: '_id',
+            connectToField: 'parent',
+            as: 'descendants',
+            depthField: 'depth',
+            // Sin maxDepth para obtener toda la profundidad
+          },
+        },
+        {
+          $project: {
+            maxDepth: {
+              $max: '$descendants.depth',
+            },
+            totalDescendants: { $size: '$descendants' },
+          },
+        },
+      ];
+
+      interface DepthResult {
+        maxDepth: number;
+        totalDescendants: number;
+      }
+
+      const result = await this.userModel
+        .aggregate<DepthResult>(pipeline)
+        .exec();
+
+      if (result.length === 0) {
+        this.logger.warn(
+          `❌ No se pudo obtener información de profundidad para usuario: ${userId}`,
+        );
+        return false;
+      }
+
+      const { maxDepth, totalDescendants } = result[0];
+
+      // El nivel 0 es el usuario root, por lo que la profundidad real es maxDepth + 1
+      const actualDepth = maxDepth !== null ? maxDepth + 1 : 0;
+
+      this.logger.log(
+        `📊 Usuario ${userId}: profundidad máxima = ${actualDepth}, descendientes = ${totalDescendants}, mínimo requerido = ${minDepthLevels}`,
+      );
+
+      const meetsRequirement = actualDepth >= minDepthLevels;
+
+      if (meetsRequirement) {
+        this.logger.log(
+          `✅ Usuario ${userId} cumple con la profundidad mínima`,
+        );
+      } else {
+        this.logger.log(
+          `❌ Usuario ${userId} NO cumple con la profundidad mínima (${actualDepth}/${minDepthLevels})`,
+        );
+      }
+
+      return meetsRequirement;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error verificando profundidad mínima para usuario ${userId}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Obtiene todos los usuarios directamente referidos por un usuario específico (sus hijos directos)
+   * @param userId - ID del usuario del cual obtener los referidos directos
+   * @returns Array de IDs de usuarios referidos directamente
+   */
+  async getDirectReferrals(userId: string): Promise<string[]> {
+    try {
+      this.logger.log(
+        `🔍 Obteniendo referidos directos para usuario: ${userId}`,
+      );
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return [];
+      }
+
+      // Buscar usuarios que tengan como parent el userId dado
+      const directReferrals = await this.userModel
+        .find(
+          {
+            parent: new Types.ObjectId(userId),
+            isActive: true, // Solo usuarios activos
+          },
+          { _id: 1 }, // Solo necesitamos el ID
+        )
+        .exec();
+
+      const referralIds = directReferrals.map((user) =>
+        (user._id as string).toString(),
+      );
+
+      this.logger.log(
+        `✅ Encontrados ${referralIds.length} referidos directos para usuario: ${userId}`,
+      );
+
+      return referralIds;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo referidos directos para usuario ${userId}:`,
+        error,
+      );
+      return [];
+    }
   }
 }
