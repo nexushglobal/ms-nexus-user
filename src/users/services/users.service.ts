@@ -564,6 +564,13 @@ export class UsersService {
             country: user.contactInfo.country,
           }
         : undefined,
+      billingInfo: user.billingInfo
+        ? {
+            ruc: user.billingInfo.ruc,
+            razonSocial: user.billingInfo.razonSocial,
+            address: user.billingInfo.address,
+          }
+        : undefined,
       photo: user.photo,
       nickname: user.nickname,
       referralCode: user.referralCode,
