@@ -1230,4 +1230,46 @@ export class UsersService {
       });
     }
   }
+
+  async getUserWithPosition(userId: string): Promise<{
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    position?: 'LEFT' | 'RIGHT';
+  } | null> {
+    try {
+      if (!Types.ObjectId.isValid(userId)) {
+        return null;
+      }
+
+      this.logger.log(`👤 Obteniendo usuario con posición: ${userId}`);
+
+      const user = await this.userModel
+        .findById(userId)
+        .select('email personalInfo position')
+        .exec();
+
+      if (!user) {
+        return null;
+      }
+
+      const result = {
+        id: (user._id as Types.ObjectId).toString(),
+        email: user.email,
+        firstName: user.personalInfo?.firstName,
+        lastName: user.personalInfo?.lastName,
+        position: user.position,
+      };
+
+      this.logger.log(`✅ Usuario con posición obtenido: ${userId}`);
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo usuario con posición ${userId}:`,
+        error,
+      );
+      return null;
+    }
+  }
 }

@@ -133,4 +133,9 @@ export class UsersController {
   getUserWithdrawalInfo(@Payload() data: { userId: string }) {
     return this.usersService.getUserWithdrawalInfo(data.userId);
   }
+
+  @MessagePattern({ cmd: 'users.getUserWithPosition' })
+  getUserWithPosition(@Payload() data: { userId: string }) {
+    return this.usersService.getUserWithPosition(data.userId);
+  }
 }
