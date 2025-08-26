@@ -24,6 +24,15 @@ import {
   UserDocument,
 } from '../schemas/user.schema';
 import { TreeService } from './tree.service';
+import { MembershipService } from 'src/common/services/membership.service';
+import { PointService } from 'src/common/services/point.service';
+import { UnilevelService } from 'src/common/services/unilevel.service';
+import {
+  UserDashboardResponse,
+  GetUsersDashboardDto,
+  UserDashboardInfo,
+} from '../interfaces/user-dashboard.interface';
+import { Paginated, PaginationMeta } from '../../common/dto/paginated.dto';
 
 @Injectable()
 export class UsersService {
@@ -37,6 +46,9 @@ export class UsersService {
     @Inject(PAYMENT_SERVICE) private readonly paymentsClient: ClientProxy,
     @Inject(MEMBERSHIP_SERVICE) private readonly membershipClient: ClientProxy,
     private readonly treeService: TreeService,
+    private readonly membershipService: MembershipService,
+    private readonly pointService: PointService,
+    private readonly unilevelService: UnilevelService,
   ) {}
 
   async register(registerDto: {
@@ -1270,6 +1282,180 @@ export class UsersService {
         error,
       );
       return null;
+    }
+  }
+
+  async getUsersDashboard(
+    params: { page: number; limit: number; sortBy: 'volume' | 'lots'; sortOrder: 'asc' | 'desc'; currentUserId: string },
+  ): Promise<{ result: Paginated<UserDashboardInfo>; currentUser: any }> {
+    try {
+      const { page, limit, sortBy, sortOrder, currentUserId } = params;
+
+      this.logger.log(`🔍 Obteniendo dashboard de usuarios directos - página ${page}, límite ${limit}, ordenado por ${sortBy} ${sortOrder}`);
+
+      // 1. Primero obtener el referralCode del usuario actual
+      const currentUser = await this.userModel
+        .findById(currentUserId)
+        .select('referralCode personalInfo email')
+        .exec();
+
+      if (!currentUser) {
+        throw new RpcException({
+          status: 404,
+          message: 'Usuario actual no encontrado',
+        });
+      }
+
+      // 2. Obtener solo los usuarios directos (que tienen como referrerCode el referralCode del usuario actual)
+      const users = await this.userModel
+        .find({ 
+          isActive: true,
+          referrerCode: currentUser.referralCode 
+        })
+        .select('email personalInfo')
+        .exec();
+
+      this.logger.log(`📊 Encontrados ${users.length} usuarios directos para el usuario ${currentUserId}`);
+
+      // 2. Procesar cada usuario para obtener su información completa
+      const userDashboardPromises = users.map(async (user) => {
+        const userId = (user._id as Types.ObjectId).toString();
+        
+        try {
+          // Ejecutar todas las consultas en paralelo
+          const [membershipInfo, monthlyVolume, lotCounts] = await Promise.all([
+            // Obtener membresía
+            this.membershipService.getUserMembership(userId).catch(() => ({ hasActiveMembership: false })),
+            // Obtener volumen mensual actual
+            this.pointService.getUserCurrentMonthlyVolume(userId).catch(() => null),
+            // Obtener conteo de lotes
+            this.unilevelService.getUserLotCounts(userId).catch(() => ({ purchased: 0, sold: 0 })),
+          ]);
+
+          const dashboardInfo: UserDashboardInfo = {
+            userId,
+            fullName: user.personalInfo
+              ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+              : 'Usuario sin nombre',
+            email: user.email,
+            membership: membershipInfo.hasActiveMembership && 
+                       'membership' in membershipInfo && 
+                       membershipInfo.membership 
+              ? {
+                  plan: membershipInfo.membership.plan,
+                  startDate: membershipInfo.membership.startDate,
+                  endDate: membershipInfo.membership.endDate,
+                  status: membershipInfo.membership.status,
+                }
+              : null,
+            monthlyVolume: {
+              leftVolume: monthlyVolume?.leftVolume || 0,
+              rightVolume: monthlyVolume?.rightVolume || 0,
+              totalVolume: monthlyVolume?.totalVolume || 0,
+            },
+            lots: {
+              purchased: lotCounts.purchased,
+              sold: lotCounts.sold,
+              total: lotCounts.purchased + lotCounts.sold,
+            },
+          };
+
+          return dashboardInfo;
+        } catch (error) {
+          this.logger.warn(`⚠️ Error procesando usuario ${userId}:`, error);
+          
+          // Retornar datos mínimos en caso de error
+          return {
+            userId,
+            fullName: user.personalInfo
+              ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+              : 'Usuario sin nombre',
+            email: user.email,
+            membership: null,
+            monthlyVolume: { leftVolume: 0, rightVolume: 0, totalVolume: 0 },
+            lots: { purchased: 0, sold: 0, total: 0 },
+          } as UserDashboardInfo;
+        }
+      });
+
+      // 3. Esperar a que se procesen todos los usuarios directos
+      const allUsersDashboard = await Promise.all(userDashboardPromises);
+
+      // 3.1. Crear información básica del usuario actual (padre/referidor)
+      const currentUserDashboard = {
+        userId: currentUserId,
+        fullName: currentUser.personalInfo
+          ? `${currentUser.personalInfo.firstName} ${currentUser.personalInfo.lastName}`.trim()
+          : 'Usuario sin nombre',
+        email: currentUser.email,
+        referralCode: currentUser.referralCode,
+        totalDirectUsers: allUsersDashboard.length,
+      };
+
+      // 4. Ordenar según el criterio especificado
+      const sortedUsers = allUsersDashboard.sort((a, b) => {
+        const multiplier = sortOrder === 'asc' ? 1 : -1;
+        
+        if (sortBy === 'volume') {
+          // Primario: volumen total
+          const volumeDiff = (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
+          if (volumeDiff !== 0) return volumeDiff;
+          
+          // Secundario: lotes total
+          return (a.lots.total - b.lots.total) * multiplier;
+        } else if (sortBy === 'lots') {
+          // Primario: lotes total
+          const lotsDiff = (a.lots.total - b.lots.total) * multiplier;
+          if (lotsDiff !== 0) return lotsDiff;
+          
+          // Secundario: volumen total
+          return (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
+        }
+        return 0;
+      });
+
+      // 5. Aplicar paginación
+      const offset = (page - 1) * limit;
+      const paginatedUsers = sortedUsers.slice(offset, offset + limit);
+
+      const totalPages = Math.ceil(sortedUsers.length / limit);
+      const hasNext = page < totalPages;
+      const hasPrev = page > 1;
+
+      this.logger.log(
+        `✅ Dashboard de usuarios directos procesado: ${paginatedUsers.length} usuarios en página ${page} de ${totalPages}`,
+      );
+
+      const paginationMeta: PaginationMeta = {
+        page,
+        limit,
+        total: sortedUsers.length,
+        totalPages,
+        hasNext,
+        hasPrev,
+      };
+
+      const result: Paginated<UserDashboardInfo> = {
+        items: paginatedUsers,
+        pagination: paginationMeta,
+      };
+
+      return {
+        result,
+        currentUser: currentUserDashboard,
+      };
+
+    } catch (error) {
+      this.logger.error('❌ Error obteniendo dashboard de usuarios directos:', error);
+
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
+      throw new RpcException({
+        status: 500,
+        message: 'Error interno del servidor al obtener dashboard de usuarios directos',
+      });
     }
   }
 }

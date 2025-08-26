@@ -138,4 +138,9 @@ export class UsersController {
   getUserWithPosition(@Payload() data: { userId: string }) {
     return this.usersService.getUserWithPosition(data.userId);
   }
+
+  @MessagePattern({ cmd: 'users.getUsersDashboard' })
+  getUsersDashboard(@Payload() params: { page: number; limit: number; sortBy: 'volume' | 'lots'; sortOrder: 'asc' | 'desc'; currentUserId: string }) {
+    return this.usersService.getUsersDashboard(params);
+  }
 }
