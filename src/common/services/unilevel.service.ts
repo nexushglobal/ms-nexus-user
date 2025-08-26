@@ -37,4 +37,25 @@ export class UnilevelService {
         ),
     );
   }
+
+  async getUsersLotCountsBatch(userIds: string[]): Promise<{ [userId: string]: UserLotCounts }> {
+    return firstValueFrom(
+      this.unilevelClient
+        .send<{ [userId: string]: UserLotCounts }>(
+          { cmd: 'unilevel.getUsersLotCountsBatch' },
+          { userIds },
+        )
+        .pipe(
+          timeout(15000),
+          catchError((error) => {
+            this.logger.error(
+              `Error obteniendo conteos de lotes en lote:`,
+              error,
+            );
+            // Retornar objeto vacío si hay error
+            return of({});
+          }),
+        ),
+    );
+  }
 }

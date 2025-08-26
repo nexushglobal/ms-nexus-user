@@ -1,6 +1,6 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { throwError, firstValueFrom } from 'rxjs';
+import { throwError, firstValueFrom, of } from 'rxjs';
 import { catchError, timeout } from 'rxjs/operators';
 import { MEMBERSHIP_SERVICE } from 'src/config/services';
 
@@ -42,6 +42,27 @@ export class MembershipService {
               service: 'membership',
               timestamp: new Date().toISOString(),
             }));
+          }),
+        ),
+    );
+  }
+
+  async getUsersMembershipBatch(userIds: string[]): Promise<{ [userId: string]: MembershipInfo }> {
+    return firstValueFrom(
+      this.membershipClient
+        .send<{ [userId: string]: MembershipInfo }>(
+          { cmd: 'membership.getUsersMembershipBatch' },
+          { userIds },
+        )
+        .pipe(
+          timeout(15000),
+          catchError((error) => {
+            this.logger.error(
+              `Error obteniendo membresías en lote:`,
+              error,
+            );
+            // Retornar objeto vacío si hay error
+            return of({});
           }),
         ),
     );

@@ -4,18 +4,25 @@ import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 import { Model, Types } from 'mongoose';
 import { firstValueFrom } from 'rxjs';
+import { MembershipService } from 'src/common/services/membership.service';
+import { PointService } from 'src/common/services/point.service';
+import { UnilevelService } from 'src/common/services/unilevel.service';
 import {
   MEMBERSHIP_SERVICE,
   NATS_SERVICE,
   PAYMENT_SERVICE,
 } from 'src/config/services';
 import { v4 as uuidv4 } from 'uuid';
+import { Paginated, PaginationMeta } from '../../common/dto/paginated.dto';
 import { Role, RoleDocument } from '../../roles/schemas/roles.schema';
 import { View, ViewDocument } from '../../views/schemas/views.schema';
 import {
   MembershipResponse,
   ReferrerMembershipResponse,
 } from '../interfaces/membership-response.interface';
+import {
+  UserDashboardInfo
+} from '../interfaces/user-dashboard.interface';
 import {
   DocumentType,
   Gender,
@@ -24,15 +31,6 @@ import {
   UserDocument,
 } from '../schemas/user.schema';
 import { TreeService } from './tree.service';
-import { MembershipService } from 'src/common/services/membership.service';
-import { PointService } from 'src/common/services/point.service';
-import { UnilevelService } from 'src/common/services/unilevel.service';
-import {
-  UserDashboardResponse,
-  GetUsersDashboardDto,
-  UserDashboardInfo,
-} from '../interfaces/user-dashboard.interface';
-import { Paginated, PaginationMeta } from '../../common/dto/paginated.dto';
 
 @Injectable()
 export class UsersService {
@@ -1308,11 +1306,11 @@ export class UsersService {
 
       // 2. Obtener solo los usuarios directos (que tienen como referrerCode el referralCode del usuario actual)
       const users = await this.userModel
-        .find({ 
+        .find({
           isActive: true,
-          referrerCode: currentUser.referralCode 
+          referrerCode: currentUser.referralCode
         })
-        .select('email personalInfo')
+        .select('email personalInfo position')
         .exec();
 
       this.logger.log(`📊 Encontrados ${users.length} usuarios directos para el usuario ${currentUserId}`);
@@ -1320,16 +1318,18 @@ export class UsersService {
       // 2. Procesar cada usuario para obtener su información completa
       const userDashboardPromises = users.map(async (user) => {
         const userId = (user._id as Types.ObjectId).toString();
-        
+
         try {
           // Ejecutar todas las consultas en paralelo
-          const [membershipInfo, monthlyVolume, lotCounts] = await Promise.all([
+          const [membershipInfo, monthlyVolume, lotCounts, rankInfo] = await Promise.all([
             // Obtener membresía
             this.membershipService.getUserMembership(userId).catch(() => ({ hasActiveMembership: false })),
             // Obtener volumen mensual actual
             this.pointService.getUserCurrentMonthlyVolume(userId).catch(() => null),
             // Obtener conteo de lotes
             this.unilevelService.getUserLotCounts(userId).catch(() => ({ purchased: 0, sold: 0 })),
+            // Obtener información de rango
+            this.pointService.getUserCurrentRank(userId).catch(() => null),
           ]);
 
           const dashboardInfo: UserDashboardInfo = {
@@ -1338,9 +1338,9 @@ export class UsersService {
               ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
               : 'Usuario sin nombre',
             email: user.email,
-            membership: membershipInfo.hasActiveMembership && 
-                       'membership' in membershipInfo && 
-                       membershipInfo.membership 
+            membership: membershipInfo.hasActiveMembership &&
+              'membership' in membershipInfo &&
+              membershipInfo.membership
               ? {
                   plan: membershipInfo.membership.plan,
                   startDate: membershipInfo.membership.startDate,
@@ -1358,12 +1358,23 @@ export class UsersService {
               sold: lotCounts.sold,
               total: lotCounts.purchased + lotCounts.sold,
             },
+            currentRank: rankInfo?.currentRank ? {
+              id: rankInfo.currentRank.id,
+              name: rankInfo.currentRank.name,
+              code: rankInfo.currentRank.code,
+            } : null,
+            highestRank: rankInfo?.highestRank ? {
+              id: rankInfo.highestRank.id,
+              name: rankInfo.highestRank.name,
+              code: rankInfo.highestRank.code,
+            } : null,
+            position: user.position || null,
           };
 
           return dashboardInfo;
         } catch (error) {
           this.logger.warn(`⚠️ Error procesando usuario ${userId}:`, error);
-          
+
           // Retornar datos mínimos en caso de error
           return {
             userId,
@@ -1374,6 +1385,9 @@ export class UsersService {
             membership: null,
             monthlyVolume: { leftVolume: 0, rightVolume: 0, totalVolume: 0 },
             lots: { purchased: 0, sold: 0, total: 0 },
+            currentRank: null,
+            highestRank: null,
+            position: user.position || null,
           } as UserDashboardInfo;
         }
       });
@@ -1395,19 +1409,19 @@ export class UsersService {
       // 4. Ordenar según el criterio especificado
       const sortedUsers = allUsersDashboard.sort((a, b) => {
         const multiplier = sortOrder === 'asc' ? 1 : -1;
-        
+
         if (sortBy === 'volume') {
           // Primario: volumen total
           const volumeDiff = (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
           if (volumeDiff !== 0) return volumeDiff;
-          
+
           // Secundario: lotes total
           return (a.lots.total - b.lots.total) * multiplier;
         } else if (sortBy === 'lots') {
           // Primario: lotes total
           const lotsDiff = (a.lots.total - b.lots.total) * multiplier;
           if (lotsDiff !== 0) return lotsDiff;
-          
+
           // Secundario: volumen total
           return (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
         }

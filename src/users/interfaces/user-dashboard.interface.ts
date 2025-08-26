@@ -17,6 +17,12 @@ export interface UserLotInfo {
   total: number;
 }
 
+export interface UserRankInfo {
+  id: number;
+  name: string;
+  code: string;
+}
+
 export interface UserDashboardInfo {
   userId: string;
   fullName: string;
@@ -24,6 +30,9 @@ export interface UserDashboardInfo {
   membership: UserMembership | null;
   monthlyVolume: UserVolumeInfo;
   lots: UserLotInfo;
+  currentRank: UserRankInfo | null;
+  highestRank: UserRankInfo | null;
+  position: 'LEFT' | 'RIGHT' | null;
 }
 
 export interface UserDashboardResponse {
