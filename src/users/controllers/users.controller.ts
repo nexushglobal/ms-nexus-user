@@ -143,4 +143,9 @@ export class UsersController {
   getUsersDashboard(@Payload() params: { page: number; limit: number; sortBy: 'volume' | 'lots'; sortOrder: 'asc' | 'desc'; currentUserId: string }) {
     return this.usersService.getUsersDashboard(params);
   }
+
+  @MessagePattern({ cmd: 'users.getUsersContactInfo' })
+  getUsersContactInfo(@Payload() data: { userIds: string[] }) {
+    return this.usersService.getUsersContactInfo(data.userIds);
+  }
 }

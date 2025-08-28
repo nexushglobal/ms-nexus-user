@@ -1472,4 +1472,56 @@ export class UsersService {
       });
     }
   }
+
+  async getUsersContactInfo(userIds: string[]): Promise<{
+    userId: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    email: string;
+    fullName: string;
+  }[]> {
+    try {
+      if (!userIds || userIds.length === 0) {
+        return [];
+      }
+
+      this.logger.log(
+        `📞 Obteniendo información de contacto para ${userIds.length} usuarios`,
+      );
+
+      // Filtrar IDs válidos
+      const validUserIds = userIds.filter(id => Types.ObjectId.isValid(id));
+      
+      if (validUserIds.length === 0) {
+        this.logger.warn('⚠️ No se encontraron IDs de usuario válidos');
+        return [];
+      }
+
+      const users = await this.userModel
+        .find({ _id: { $in: validUserIds } })
+        .select('email personalInfo contactInfo')
+        .exec();
+
+      const result = users.map(user => ({
+        userId: (user._id as Types.ObjectId).toString(),
+        firstName: user.personalInfo?.firstName || '',
+        lastName: user.personalInfo?.lastName || '',
+        phone: user.contactInfo?.phone || '',
+        email: user.email,
+        fullName: user.personalInfo 
+          ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
+          : '',
+      }));
+
+      this.logger.log(
+        `✅ Información de contacto obtenida para ${result.length} usuarios`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error('❌ Error obteniendo información de contacto:', error);
+      return [];
+    }
+  }
 }
