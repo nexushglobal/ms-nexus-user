@@ -889,4 +889,87 @@ export class TreeService {
       return [];
     }
   }
+
+  /**
+   * Obtiene la cadena de padres de un usuario hasta 6 niveles hacia arriba
+   * @param userId - ID del usuario del cual obtener la cadena de padres
+   * @returns Array de padres ordenados desde el padre directo hacia arriba
+   */
+  async getParentChain(userId: string): Promise<{
+    userId: string;
+    userName: string;
+    userEmail: string;
+  }[]> {
+    try {
+      this.logger.log(`🔍 Obteniendo cadena de padres para usuario: ${userId}`);
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
+        return [];
+      }
+
+      const parentChain: {
+        userId: string;
+        userName: string;
+        userEmail: string;
+      }[] = [];
+
+      let currentUserId = userId;
+      const maxLevels = 6;
+
+      // Recorrer hacia arriba en la jerarquía
+      for (let level = 0; level < maxLevels; level++) {
+        // Buscar el usuario actual y su padre
+        const currentUser = await this.userModel
+          .findById(currentUserId)
+          .populate({
+            path: 'parent',
+            select: 'email personalInfo'
+          })
+          .exec();
+
+        // Si no encontramos el usuario actual, salir del loop
+        if (!currentUser) {
+          this.logger.warn(`❌ Usuario no encontrado: ${currentUserId}`);
+          break;
+        }
+
+        // Si no tiene padre, salir del loop
+        if (!currentUser.parent) {
+          this.logger.log(`ℹ️ Usuario ${currentUserId} no tiene padre (nivel ${level})`);
+          break;
+        }
+
+        const parent = currentUser.parent as any;
+
+        // Agregar el padre a la cadena
+        const parentInfo = {
+          userId: parent._id.toString(),
+          userName: parent.personalInfo 
+            ? `${parent.personalInfo.firstName} ${parent.personalInfo.lastName}`.trim()
+            : 'Usuario sin nombre',
+          userEmail: parent.email
+        };
+
+        parentChain.push(parentInfo);
+
+        this.logger.log(`📋 Nivel ${level + 1}: Padre ${parentInfo.userId} - ${parentInfo.userName}`);
+
+        // Continuar con el padre para el siguiente nivel
+        currentUserId = parent._id.toString();
+      }
+
+      this.logger.log(
+        `✅ Cadena de padres completada: ${parentChain.length} niveles para usuario ${userId}`
+      );
+
+      return parentChain;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo cadena de padres para usuario ${userId}:`,
+        error
+      );
+      return [];
+    }
+  }
 }

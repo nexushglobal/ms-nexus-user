@@ -36,4 +36,9 @@ export class TreeController {
   async getDirectReferrals(@Payload() data: { userId: string }) {
     return await this.treeService.getDirectReferrals(data.userId);
   }
+
+  @MessagePattern({ cmd: 'user.tree.getParentChain' })
+  async getParentChain(@Payload() data: { userId: string }) {
+    return await this.treeService.getParentChain(data.userId);
+  }
 }
