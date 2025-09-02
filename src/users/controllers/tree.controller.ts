@@ -41,4 +41,9 @@ export class TreeController {
   async getParentChain(@Payload() data: { userId: string }) {
     return await this.treeService.getParentChain(data.userId);
   }
+
+  @MessagePattern({ cmd: 'user.tree.getAncestors' })
+  async getUserAncestors(@Payload() data: { userId: string }) {
+    return await this.treeService.getUserAncestors(data.userId);
+  }
 }
