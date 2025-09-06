@@ -140,7 +140,16 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.getUsersDashboard' })
-  getUsersDashboard(@Payload() params: { page: number; limit: number; sortBy: 'volume' | 'lots'; sortOrder: 'asc' | 'desc'; currentUserId: string }) {
+  getUsersDashboard(
+    @Payload()
+    params: {
+      page: number;
+      limit: number;
+      sortBy: 'volume' | 'lots';
+      sortOrder: 'asc' | 'desc';
+      currentUserId: string;
+    },
+  ) {
     return this.usersService.getUsersDashboard(params);
   }
 

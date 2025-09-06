@@ -650,83 +650,92 @@ export class TreeService {
         return [];
       }
 
-      // Usar aggregation para obtener todos los ancestros con GraphLookup
-      const pipeline = [
-        {
-          $match: {
-            _id: new Types.ObjectId(userId),
-          },
-        },
-        {
-          $graphLookup: {
-            from: 'users',
-            startWith: '$parent',
-            connectFromField: 'parent',
-            connectToField: '_id',
-            as: 'ancestors',
-            // Sin maxDepth para obtener toda la jerarquía
-          },
-        },
-        {
-          $project: {
-            ancestors: {
-              $map: {
-                input: '$ancestors',
-                as: 'ancestor',
-                in: {
-                  _id: '$$ancestor._id',
-                  email: '$$ancestor.email',
-                  personalInfo: '$$ancestor.personalInfo',
-                  position: '$$ancestor.position',
-                  isActive: '$$ancestor.isActive',
-                },
-              },
-            },
-          },
-        },
-      ];
+      const ancestors: {
+        userId: string;
+        userName: string;
+        userEmail: string;
+        site: 'LEFT' | 'RIGHT';
+      }[] = [];
 
-      interface AncestorResult {
-        ancestors: {
-          _id: Types.ObjectId;
-          email: string;
-          personalInfo?: {
-            firstName: string;
-            lastName: string;
-          };
-          position?: 'LEFT' | 'RIGHT';
-          isActive: boolean;
-        }[];
-      }
+      let currentUserId = userId;
 
-      const result = await this.userModel
-        .aggregate<AncestorResult>(pipeline)
-        .exec();
+      // Recorrer hacia arriba en la jerarquía hasta llegar al root
+      while (true) {
+        // Buscar el usuario actual y su padre
+        const currentUser = await this.userModel
+          .findById(currentUserId, {
+            parent: 1,
+            position: 1,
+          })
+          .populate({
+            path: 'parent',
+            select: 'email personalInfo isActive',
+          })
+          .exec();
 
-      if (result.length === 0 || !result[0].ancestors) {
-        this.logger.log(`ℹ️ Usuario ${userId} no tiene ancestros`);
-        return [];
-      }
+        // Si no encontramos el usuario actual, salir del loop
+        if (!currentUser) {
+          this.logger.warn(`❌ Usuario no encontrado: ${currentUserId}`);
+          break;
+        }
 
-      const ancestors = result[0].ancestors;
+        // Si no tiene padre, salir del loop (llegamos al root)
+        if (!currentUser.parent) {
+          this.logger.log(
+            `ℹ️ Usuario ${currentUserId} no tiene padre (llegó al root)`,
+          );
+          break;
+        }
 
-      // Filtrar solo usuarios activos y mapear al formato requerido
-      const ancestorsData = ancestors
-        .filter((ancestor) => ancestor.isActive && ancestor.position)
-        .map((ancestor) => ({
-          userId: ancestor._id.toString(),
-          userName: ancestor.personalInfo
-            ? `${ancestor.personalInfo.firstName} ${ancestor.personalInfo.lastName}`.trim()
+        const parent = currentUser.parent as any;
+
+        // Verificar que el padre esté activo
+        if (!parent.isActive) {
+          this.logger.log(
+            `⚠️ Padre ${parent._id} no está activo, saltando`,
+          );
+          currentUserId = parent._id.toString();
+          continue;
+        }
+
+        // La posición es la del usuario actual (hijo) respecto a su padre
+        // No necesitamos hacer consulta adicional, ya tenemos currentUser.position
+        const childPosition = currentUser.position;
+
+        // Si el usuario actual no tiene posición, saltar (no debería pasar en un árbol bien formado)
+        if (!childPosition) {
+          this.logger.log(
+            `⚠️ Usuario ${currentUserId} no tiene posición definida, saltando`,
+          );
+          currentUserId = parent._id.toString();
+          continue;
+        }
+
+        // Agregar el padre a la lista de ancestros con la posición del hijo
+        const ancestorInfo = {
+          userId: parent._id.toString(),
+          userName: parent.personalInfo
+            ? `${parent.personalInfo.firstName} ${parent.personalInfo.lastName}`.trim()
             : 'Usuario sin nombre',
-          userEmail: ancestor.email,
-          site: ancestor.position as 'LEFT' | 'RIGHT',
-        }));
+          userEmail: parent.email,
+          site: childPosition as 'LEFT' | 'RIGHT',
+        };
+
+        ancestors.push(ancestorInfo);
+
+        this.logger.log(
+          `📋 Ancestro encontrado: ${ancestorInfo.userId} - ${ancestorInfo.userName} (${ancestorInfo.site})`,
+        );
+
+        // Continuar con el padre para el siguiente nivel
+        currentUserId = parent._id.toString();
+      }
 
       this.logger.log(
-        `✅ Encontrados ${ancestorsData.length} ancestros activos para usuario: ${userId}`,
+        `✅ Encontrados ${ancestors.length} ancestros activos para usuario: ${userId}`,
       );
 
-      return ancestorsData;
+      return ancestors;
     } catch (error) {
       this.logger.error(
         `❌ Error obteniendo ancestros para usuario ${userId}:`,
@@ -895,11 +904,13 @@ export class TreeService {
    * @param userId - ID del usuario del cual obtener la cadena de padres
    * @returns Array de padres ordenados desde el padre directo hacia arriba
    */
-  async getParentChain(userId: string): Promise<{
-    userId: string;
-    userName: string;
-    userEmail: string;
-  }[]> {
+  async getParentChain(userId: string): Promise<
+    {
+      userId: string;
+      userName: string;
+      userEmail: string;
+    }[]
+  > {
     try {
       this.logger.log(`🔍 Obteniendo cadena de padres para usuario: ${userId}`);
 
@@ -924,7 +935,7 @@ export class TreeService {
           .findById(currentUserId)
           .populate({
             path: 'parent',
-            select: 'email personalInfo'
+            select: 'email personalInfo',
           })
           .exec();
 
@@ -936,7 +947,9 @@ export class TreeService {
 
         // Si no tiene padre, salir del loop
         if (!currentUser.parent) {
-          this.logger.log(`ℹ️ Usuario ${currentUserId} no tiene padre (nivel ${level})`);
+          this.logger.log(
+            `ℹ️ Usuario ${currentUserId} no tiene padre (nivel ${level})`,
+          );
           break;
         }
 
@@ -945,29 +958,31 @@ export class TreeService {
         // Agregar el padre a la cadena
         const parentInfo = {
           userId: parent._id.toString(),
-          userName: parent.personalInfo 
+          userName: parent.personalInfo
             ? `${parent.personalInfo.firstName} ${parent.personalInfo.lastName}`.trim()
             : 'Usuario sin nombre',
-          userEmail: parent.email
+          userEmail: parent.email,
         };
 
         parentChain.push(parentInfo);
 
-        this.logger.log(`📋 Nivel ${level + 1}: Padre ${parentInfo.userId} - ${parentInfo.userName}`);
+        this.logger.log(
+          `📋 Nivel ${level + 1}: Padre ${parentInfo.userId} - ${parentInfo.userName}`,
+        );
 
         // Continuar con el padre para el siguiente nivel
         currentUserId = parent._id.toString();
       }
 
       this.logger.log(
-        `✅ Cadena de padres completada: ${parentChain.length} niveles para usuario ${userId}`
+        `✅ Cadena de padres completada: ${parentChain.length} niveles para usuario ${userId}`,
       );
 
       return parentChain;
     } catch (error) {
       this.logger.error(
         `❌ Error obteniendo cadena de padres para usuario ${userId}:`,
-        error
+        error,
       );
       return [];
     }

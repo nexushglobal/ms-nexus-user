@@ -20,9 +20,7 @@ import {
   MembershipResponse,
   ReferrerMembershipResponse,
 } from '../interfaces/membership-response.interface';
-import {
-  UserDashboardInfo
-} from '../interfaces/user-dashboard.interface';
+import { UserDashboardInfo } from '../interfaces/user-dashboard.interface';
 import {
   DocumentType,
   Gender,
@@ -1090,10 +1088,6 @@ export class UsersService {
     }[]
   > {
     try {
-      this.logger.log(
-        `🔍 Obteniendo ancestros con membresía activa para usuario: ${userId}`,
-      );
-
       // Validar que el userId sea válido
       if (!Types.ObjectId.isValid(userId)) {
         this.logger.warn(`❌ ID de usuario inválido: ${userId}`);
@@ -1105,6 +1099,11 @@ export class UsersService {
 
       // 1. Obtener todos los usuarios superiores en la jerarquía
       const ancestors = await this.treeService.getUserAncestors(userId);
+      for (const ancestor of ancestors) {
+        this.logger.log(
+          `🔗 Ancestro encontrado: ${ancestor.userId} en el sitio ${ancestor.site} nombre: ${ancestor.userName}`,
+        );
+      }
 
       if (ancestors.length === 0) {
         this.logger.log(
@@ -1112,30 +1111,16 @@ export class UsersService {
         );
         return [];
       }
-
-      this.logger.log(
-        `📋 Encontrados ${ancestors.length} ancestros para el usuario ${userId}`,
-      );
-
       // 2. Preparar array de userIds para consultar membresías
       const userIds = ancestors.map((ancestor) => ({
         userId: ancestor.userId,
       }));
-
-      // 3. Consultar el servicio de membresías para verificar cuáles tienen membresía activa
-      this.logger.log(
-        `📞 Consultando membresías activas para ${userIds.length} usuarios`,
-      );
 
       const membershipResponse = await firstValueFrom(
         this.membershipClient.send(
           { cmd: 'membership.checkUserActiveMembership' },
           { users: userIds },
         ),
-      );
-
-      this.logger.log(
-        `📄 Respuesta del servicio de membresías: ${JSON.stringify(membershipResponse)}`,
       );
 
       // 4. Filtrar solo los usuarios que tienen membresía activa
@@ -1283,13 +1268,19 @@ export class UsersService {
     }
   }
 
-  async getUsersDashboard(
-    params: { page: number; limit: number; sortBy: 'volume' | 'lots'; sortOrder: 'asc' | 'desc'; currentUserId: string },
-  ): Promise<{ result: Paginated<UserDashboardInfo>; currentUser: any }> {
+  async getUsersDashboard(params: {
+    page: number;
+    limit: number;
+    sortBy: 'volume' | 'lots';
+    sortOrder: 'asc' | 'desc';
+    currentUserId: string;
+  }): Promise<{ result: Paginated<UserDashboardInfo>; currentUser: any }> {
     try {
       const { page, limit, sortBy, sortOrder, currentUserId } = params;
 
-      this.logger.log(`🔍 Obteniendo dashboard de usuarios directos - página ${page}, límite ${limit}, ordenado por ${sortBy} ${sortOrder}`);
+      this.logger.log(
+        `🔍 Obteniendo dashboard de usuarios directos - página ${page}, límite ${limit}, ordenado por ${sortBy} ${sortOrder}`,
+      );
 
       // 1. Primero obtener el referralCode del usuario actual
       const currentUser = await this.userModel
@@ -1308,12 +1299,14 @@ export class UsersService {
       const users = await this.userModel
         .find({
           isActive: true,
-          referrerCode: currentUser.referralCode
+          referrerCode: currentUser.referralCode,
         })
         .select('email personalInfo position')
         .exec();
 
-      this.logger.log(`📊 Encontrados ${users.length} usuarios directos para el usuario ${currentUserId}`);
+      this.logger.log(
+        `📊 Encontrados ${users.length} usuarios directos para el usuario ${currentUserId}`,
+      );
 
       // 2. Procesar cada usuario para obtener su información completa
       const userDashboardPromises = users.map(async (user) => {
@@ -1321,16 +1314,23 @@ export class UsersService {
 
         try {
           // Ejecutar todas las consultas en paralelo
-          const [membershipInfo, monthlyVolume, lotCounts, rankInfo] = await Promise.all([
-            // Obtener membresía
-            this.membershipService.getUserMembership(userId).catch(() => ({ hasActiveMembership: false })),
-            // Obtener volumen mensual actual
-            this.pointService.getUserCurrentMonthlyVolume(userId).catch(() => null),
-            // Obtener conteo de lotes
-            this.unilevelService.getUserLotCounts(userId).catch(() => ({ purchased: 0, sold: 0 })),
-            // Obtener información de rango
-            this.pointService.getUserCurrentRank(userId).catch(() => null),
-          ]);
+          const [membershipInfo, monthlyVolume, lotCounts, rankInfo] =
+            await Promise.all([
+              // Obtener membresía
+              this.membershipService
+                .getUserMembership(userId)
+                .catch(() => ({ hasActiveMembership: false })),
+              // Obtener volumen mensual actual
+              this.pointService
+                .getUserCurrentMonthlyVolume(userId)
+                .catch(() => null),
+              // Obtener conteo de lotes
+              this.unilevelService
+                .getUserLotCounts(userId)
+                .catch(() => ({ purchased: 0, sold: 0 })),
+              // Obtener información de rango
+              this.pointService.getUserCurrentRank(userId).catch(() => null),
+            ]);
 
           const dashboardInfo: UserDashboardInfo = {
             userId,
@@ -1338,16 +1338,17 @@ export class UsersService {
               ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
               : 'Usuario sin nombre',
             email: user.email,
-            membership: membershipInfo.hasActiveMembership &&
+            membership:
+              membershipInfo.hasActiveMembership &&
               'membership' in membershipInfo &&
               membershipInfo.membership
-              ? {
-                  plan: membershipInfo.membership.plan,
-                  startDate: membershipInfo.membership.startDate,
-                  endDate: membershipInfo.membership.endDate,
-                  status: membershipInfo.membership.status,
-                }
-              : null,
+                ? {
+                    plan: membershipInfo.membership.plan,
+                    startDate: membershipInfo.membership.startDate,
+                    endDate: membershipInfo.membership.endDate,
+                    status: membershipInfo.membership.status,
+                  }
+                : null,
             monthlyVolume: {
               leftVolume: monthlyVolume?.leftVolume || 0,
               rightVolume: monthlyVolume?.rightVolume || 0,
@@ -1358,16 +1359,20 @@ export class UsersService {
               sold: lotCounts.sold,
               total: lotCounts.purchased + lotCounts.sold,
             },
-            currentRank: rankInfo?.currentRank ? {
-              id: rankInfo.currentRank.id,
-              name: rankInfo.currentRank.name,
-              code: rankInfo.currentRank.code,
-            } : null,
-            highestRank: rankInfo?.highestRank ? {
-              id: rankInfo.highestRank.id,
-              name: rankInfo.highestRank.name,
-              code: rankInfo.highestRank.code,
-            } : null,
+            currentRank: rankInfo?.currentRank
+              ? {
+                  id: rankInfo.currentRank.id,
+                  name: rankInfo.currentRank.name,
+                  code: rankInfo.currentRank.code,
+                }
+              : null,
+            highestRank: rankInfo?.highestRank
+              ? {
+                  id: rankInfo.highestRank.id,
+                  name: rankInfo.highestRank.name,
+                  code: rankInfo.highestRank.code,
+                }
+              : null,
             position: user.position || null,
           };
 
@@ -1412,7 +1417,9 @@ export class UsersService {
 
         if (sortBy === 'volume') {
           // Primario: volumen total
-          const volumeDiff = (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
+          const volumeDiff =
+            (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) *
+            multiplier;
           if (volumeDiff !== 0) return volumeDiff;
 
           // Secundario: lotes total
@@ -1423,7 +1430,10 @@ export class UsersService {
           if (lotsDiff !== 0) return lotsDiff;
 
           // Secundario: volumen total
-          return (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) * multiplier;
+          return (
+            (a.monthlyVolume.totalVolume - b.monthlyVolume.totalVolume) *
+            multiplier
+          );
         }
         return 0;
       });
@@ -1458,9 +1468,11 @@ export class UsersService {
         result,
         currentUser: currentUserDashboard,
       };
-
     } catch (error) {
-      this.logger.error('❌ Error obteniendo dashboard de usuarios directos:', error);
+      this.logger.error(
+        '❌ Error obteniendo dashboard de usuarios directos:',
+        error,
+      );
 
       if (error instanceof RpcException) {
         throw error;
@@ -1468,19 +1480,22 @@ export class UsersService {
 
       throw new RpcException({
         status: 500,
-        message: 'Error interno del servidor al obtener dashboard de usuarios directos',
+        message:
+          'Error interno del servidor al obtener dashboard de usuarios directos',
       });
     }
   }
 
-  async getUsersContactInfo(userIds: string[]): Promise<{
-    userId: string;
-    firstName: string;
-    lastName: string;
-    phone: string;
-    email: string;
-    fullName: string;
-  }[]> {
+  async getUsersContactInfo(userIds: string[]): Promise<
+    {
+      userId: string;
+      firstName: string;
+      lastName: string;
+      phone: string;
+      email: string;
+      fullName: string;
+    }[]
+  > {
     try {
       if (!userIds || userIds.length === 0) {
         return [];
@@ -1491,8 +1506,8 @@ export class UsersService {
       );
 
       // Filtrar IDs válidos
-      const validUserIds = userIds.filter(id => Types.ObjectId.isValid(id));
-      
+      const validUserIds = userIds.filter((id) => Types.ObjectId.isValid(id));
+
       if (validUserIds.length === 0) {
         this.logger.warn('⚠️ No se encontraron IDs de usuario válidos');
         return [];
@@ -1503,13 +1518,13 @@ export class UsersService {
         .select('email personalInfo contactInfo')
         .exec();
 
-      const result = users.map(user => ({
+      const result = users.map((user) => ({
         userId: (user._id as Types.ObjectId).toString(),
         firstName: user.personalInfo?.firstName || '',
         lastName: user.personalInfo?.lastName || '',
         phone: user.contactInfo?.phone || '',
         email: user.email,
-        fullName: user.personalInfo 
+        fullName: user.personalInfo
           ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
           : '',
       }));
