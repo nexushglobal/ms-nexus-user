@@ -42,7 +42,8 @@ export class ProfileService {
   }
 
   async updateContactInfo(userId: string, dto: UpdateContactInfoDto) {
-    const updateData = this.buildUpdateData(dto, 'contactInfo');
+    const existingUser = await this.validateUserAndGet(userId);
+    const updateData = this.buildUpdateData(dto, 'contactInfo', existingUser);
 
     const updatedUser = await this.updateUserById(userId, updateData, {
       populate: { path: 'role', select: 'id code name isActive' },
@@ -55,18 +56,23 @@ export class ProfileService {
   }
 
   async updateBillingInfo(userId: string, dto: UpdateBillingInfoDto) {
-    const updateData = this.buildUpdateData(dto, 'billingInfo');
+    try {
+      const existingUser = await this.validateUserAndGet(userId);
+      const updateData = this.buildUpdateData(dto, 'billingInfo', existingUser);
 
-    const updatedUser = await this.updateUserById(userId, updateData);
-
-    return {
-      billingInfo: this.extractNestedData(updatedUser, 'billingInfo'),
-      updatedAt: updatedUser.updatedAt,
-    };
+      const updatedUser = await this.updateUserById(userId, updateData);
+      return {
+        billingInfo: this.extractNestedData(updatedUser, 'billingInfo'),
+        updatedAt: updatedUser.updatedAt,
+      };
+    } catch (error) {
+      this.handleError(error, 'Error actualizando información de facturación');
+    }
   }
 
   async updateBankInfo(userId: string, dto: UpdateBankInfoDto) {
-    const updateData = this.buildUpdateData(dto, 'bankInfo');
+    const existingUser = await this.validateUserAndGet(userId);
+    const updateData = this.buildUpdateData(dto, 'bankInfo', existingUser);
 
     const updatedUser = await this.updateUserById(userId, updateData);
 
@@ -212,14 +218,28 @@ export class ProfileService {
   private buildUpdateData(
     dto: Record<string, any>,
     prefix: string,
+    existingUser?: UserDocument,
   ): Record<string, any> {
     const updateData: Record<string, any> = {};
 
-    Object.entries(dto).forEach(([key, value]) => {
-      if (value !== undefined) {
-        updateData[`${prefix}.${key}`] = value;
-      }
-    });
+    // Si se proporciona el usuario existente y el campo anidado es null,
+    // crear el objeto completo en lugar de usar notación de punto
+    if (existingUser && !(existingUser as any)[prefix]) {
+      const nestedObject: Record<string, any> = {};
+      Object.entries(dto).forEach(([key, value]) => {
+        if (value !== undefined) {
+          nestedObject[key] = value;
+        }
+      });
+      updateData[prefix] = nestedObject;
+    } else {
+      // Usar notación de punto si el objeto ya existe
+      Object.entries(dto).forEach(([key, value]) => {
+        if (value !== undefined) {
+          updateData[`${prefix}.${key}`] = value;
+        }
+      });
+    }
 
     return updateData;
   }

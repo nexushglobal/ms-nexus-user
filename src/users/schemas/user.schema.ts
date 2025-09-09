@@ -253,6 +253,7 @@ export class User {
 
   @Prop({
     type: BillingInfoSchema,
+    required: false,
   })
   billingInfo?: BillingInfo;
 

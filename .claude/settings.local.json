@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/C:\\Users\\antho\\microservices\\ms-nexus-user\\src\\users\\schemas/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
