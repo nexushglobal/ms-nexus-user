@@ -46,4 +46,19 @@ export class TreeController {
   async getUserAncestors(@Payload() data: { userId: string }) {
     return await this.treeService.getUserAncestors(data.userId);
   }
+
+  @MessagePattern({ cmd: 'user.getUserWithChildren' })
+  async getUserWithChildren(@Payload() data: { userId: string }) {
+    return await this.treeService.getUserWithChildren(data.userId);
+  }
+
+  @MessagePattern({ cmd: 'user.tree.getDescendantsInLeg' })
+  async getDescendantsInLeg(@Payload() data: { userId: string; side: 'LEFT' | 'RIGHT' }) {
+    return await this.treeService.getDescendantsInLeg(data.userId, data.side);
+  }
+
+  @MessagePattern({ cmd: 'user.tree.checkActiveMembershipsInLeg' })
+  async checkActiveMembershipsInLeg(@Payload() data: { descendantIds: string[]; referralCode: string }) {
+    return await this.treeService.checkActiveMembershipsInLeg(data.descendantIds, data.referralCode);
+  }
 }

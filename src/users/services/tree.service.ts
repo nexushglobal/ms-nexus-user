@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { MembershipService } from 'src/common/services/membership.service';
 import {
   TreeNode,
   TreeQueryParams,
@@ -34,7 +35,10 @@ interface UserAggregationResult {
 export class TreeService {
   private readonly logger = new Logger(TreeService.name);
 
-  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
+  constructor(
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private membershipService: MembershipService,
+  ) {}
 
   async getUserTree(params: TreeQueryParams): Promise<TreeResponse> {
     const startTime = Date.now();
@@ -970,6 +974,165 @@ export class TreeService {
         error
       );
       return [];
+    }
+  }
+
+  /**
+   * Obtiene usuario con sus hijos directos (para verificación de piernas MLM)
+   */
+  async getUserWithChildren(userId: string): Promise<{
+    id: string;
+    referralCode: string;
+    leftChildId?: string;
+    rightChildId?: string;
+  }> {
+    try {
+      this.logger.debug(`Obteniendo usuario con hijos: ${userId}`);
+
+      if (!Types.ObjectId.isValid(userId)) {
+        throw new RpcException({
+          status: 400,
+          message: 'ID de usuario inválido',
+        });
+      }
+
+      const user = await this.userModel.findById(userId)
+        .select('referralCode leftChild rightChild')
+        .lean();
+
+      if (!user) {
+        throw new RpcException({
+          status: 404,
+          message: 'Usuario no encontrado',
+        });
+      }
+
+      return {
+        id: userId,
+        referralCode: user.referralCode,
+        leftChildId: user.leftChild?.toString(),
+        rightChildId: user.rightChild?.toString(),
+      };
+    } catch (error) {
+      this.logger.error(`Error obteniendo usuario con hijos ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtiene todos los descendientes en una pierna específica (LEFT o RIGHT)
+   * Equivalente al query recursivo del monolito
+   */
+  async getDescendantsInLeg(rootChildId: string, side: 'LEFT' | 'RIGHT'): Promise<string[]> {
+    try {
+      this.logger.debug(`Obteniendo descendientes en pierna ${side} desde: ${rootChildId}`);
+
+      if (!Types.ObjectId.isValid(rootChildId)) {
+        return [];
+      }
+
+      // Usar agregación para obtener todos los descendientes recursivamente
+      const descendants = await this.userModel.aggregate([
+        // Comenzar desde el hijo raíz
+        { $match: { _id: new Types.ObjectId(rootChildId) } },
+        
+        // GraphLookup para obtener todos los descendientes
+        {
+          $graphLookup: {
+            from: 'users',
+            startWith: '$_id',
+            connectFromField: '_id',
+            connectToField: 'parent',
+            as: 'allDescendants',
+            maxDepth: 20, // Límite de profundidad para evitar loops infinitos
+          }
+        },
+        
+        // Proyectar solo los IDs
+        {
+          $project: {
+            descendantIds: {
+              $concatArrays: [
+                ['$_id'], // Incluir el nodo raíz
+                { $map: { input: '$allDescendants', in: '$$this._id' } }
+              ]
+            }
+          }
+        }
+      ]);
+
+      if (descendants.length === 0) {
+        this.logger.debug(`No se encontraron descendientes para ${rootChildId}`);
+        return [];
+      }
+
+      const descendantIds = descendants[0].descendantIds.map((id: Types.ObjectId) => id.toString());
+      
+      this.logger.debug(`Encontrados ${descendantIds.length} descendientes en pierna ${side}`);
+      
+      return descendantIds;
+    } catch (error) {
+      this.logger.error(`Error obteniendo descendientes en pierna ${side}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Verifica si hay membresías activas en la pierna especificada
+   * Integra con el servicio de membresías
+   */
+  async checkActiveMembershipsInLeg(
+    descendantIds: string[], 
+    referralCode: string
+  ): Promise<boolean> {
+    try {
+      this.logger.debug(`Verificando membresías activas para ${descendantIds.length} descendientes`);
+
+      if (!descendantIds || descendantIds.length === 0) {
+        return false;
+      }
+
+      // 1. Filtrar usuarios que tengan el referralCode correcto
+      const validObjectIds = descendantIds
+        .filter(id => Types.ObjectId.isValid(id))
+        .map(id => new Types.ObjectId(id));
+
+      const usersWithReferrer = await this.userModel.find({
+        _id: { $in: validObjectIds },
+        referrerCode: referralCode,
+      }).select('_id').lean();
+
+      if (usersWithReferrer.length === 0) {
+        this.logger.debug('No se encontraron usuarios con el referralCode correcto');
+        return false;
+      }
+
+      const filteredUserIds = usersWithReferrer.map(user => user._id.toString());
+
+      // 2. Verificar membresías activas usando el servicio de membresías
+      const membershipService = this.membershipService;
+      if (!membershipService) {
+        this.logger.warn('Servicio de membresías no disponible, asumiendo sin membresías activas');
+        return false;
+      }
+
+      try {
+        const membershipsData = await membershipService.getUsersMembershipBatch(filteredUserIds);
+        
+        // Verificar si alguna membresía está activa
+        const hasActiveMemberships = Object.values(membershipsData).some(
+          membershipInfo => membershipInfo?.hasActiveMembership === true
+        );
+
+        this.logger.debug(`Resultado verificación membresías: ${hasActiveMemberships}`);
+        return hasActiveMemberships;
+      } catch (membershipError) {
+        this.logger.error('Error consultando servicio de membresías:', membershipError);
+        return false;
+      }
+    } catch (error) {
+      this.logger.error('Error verificando membresías activas en pierna:', error);
+      return false;
     }
   }
 }
