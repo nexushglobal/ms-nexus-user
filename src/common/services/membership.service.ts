@@ -1,6 +1,6 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { throwError, firstValueFrom, of } from 'rxjs';
+import { firstValueFrom, of, throwError } from 'rxjs';
 import { catchError, timeout } from 'rxjs/operators';
 import { MEMBERSHIP_SERVICE } from 'src/config/services';
 
@@ -13,6 +13,22 @@ export interface MembershipInfo {
     status: string;
   } | null;
 }
+export class UserMembershipPlanDto {
+  id: number;
+  name: string;
+  commissionPercentage: number;
+  directCommissionAmount?: number;
+}
+
+export class GetUserMembershipByUserIdResponseDto {
+  id?: number;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  plan?: UserMembershipPlanDto;
+  message?: string;
+  hasActiveMembership: boolean;
+}
 
 @Injectable()
 export class MembershipService {
@@ -22,12 +38,14 @@ export class MembershipService {
     @Inject(MEMBERSHIP_SERVICE) private readonly membershipClient: ClientProxy,
   ) {}
 
-  async getUserMembership(userId: string): Promise<MembershipInfo> {
+  async getUserMembership(
+    userId: string,
+  ): Promise<GetUserMembershipByUserIdResponseDto> {
     return firstValueFrom(
       this.membershipClient
-        .send<MembershipInfo>(
-          { cmd: 'membership.getUserMembershipByUserId' },
-          { userId },
+        .send<GetUserMembershipByUserIdResponseDto>(
+          { cmd: 'membership.getUserMembershipInfo' },
+          { userId: userId },
         )
         .pipe(
           timeout(10000),
@@ -47,20 +65,18 @@ export class MembershipService {
     );
   }
 
-  async getUsersMembershipBatch(userIds: string[]): Promise<{ [userId: string]: MembershipInfo }> {
+  async getUsersMembershipBatch(
+    userIds: string[],
+  ): Promise<{ [userId: string]: MembershipInfo }> {
     return firstValueFrom(
       this.membershipClient
-        .send<{ [userId: string]: MembershipInfo }>(
-          { cmd: 'membership.getUsersMembershipBatch' },
-          { userIds },
-        )
+        .send<{
+          [userId: string]: MembershipInfo;
+        }>({ cmd: 'membership.getUsersMembershipBatch' }, { userIds })
         .pipe(
           timeout(15000),
           catchError((error) => {
-            this.logger.error(
-              `Error obteniendo membresías en lote:`,
-              error,
-            );
+            this.logger.error(`Error obteniendo membresías en lote:`, error);
             // Retornar objeto vacío si hay error
             return of({});
           }),
