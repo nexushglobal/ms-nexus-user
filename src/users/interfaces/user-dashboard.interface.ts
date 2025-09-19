@@ -22,12 +22,28 @@ export interface UserRankInfo {
   name: string;
   code: string;
 }
+export class UserMembershipPlanDto {
+  id: number;
+  name: string;
+  commissionPercentage: number;
+  directCommissionAmount?: number;
+}
 
+export class GetUserMembershipByUserIdResponseDto {
+  id?: number;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  plan?: UserMembershipPlanDto;
+  message?: string;
+  hasActiveMembership: boolean;
+}
 export interface UserDashboardInfo {
   userId: string;
   fullName: string;
+  phone: string;
   email: string;
-  membership: UserMembership | null;
+  membership: GetUserMembershipByUserIdResponseDto | null;
   monthlyVolume: UserVolumeInfo;
   lots: UserLotInfo;
   currentRank: UserRankInfo | null;

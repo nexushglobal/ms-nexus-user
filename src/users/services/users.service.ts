@@ -1310,7 +1310,7 @@ export class UsersService {
           isActive: true,
           referrerCode: currentUser.referralCode,
         })
-        .select('email personalInfo position')
+        .select('email personalInfo position contactInfo')
         .exec();
 
       this.logger.log(
@@ -1347,17 +1347,8 @@ export class UsersService {
               ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim()
               : 'Usuario sin nombre',
             email: user.email,
-            membership:
-              membershipInfo.hasActiveMembership &&
-              'membership' in membershipInfo &&
-              membershipInfo.membership
-                ? {
-                    plan: membershipInfo.membership.plan,
-                    startDate: membershipInfo.membership.startDate,
-                    endDate: membershipInfo.membership.endDate,
-                    status: membershipInfo.membership.status,
-                  }
-                : null,
+            phone: user.contactInfo?.phone || '',
+            membership: membershipInfo,
             monthlyVolume: {
               leftVolume: monthlyVolume?.leftVolume || 0,
               rightVolume: monthlyVolume?.rightVolume || 0,
@@ -1546,6 +1537,100 @@ export class UsersService {
     } catch (error) {
       this.logger.error('❌ Error obteniendo información de contacto:', error);
       return [];
+    }
+  }
+
+  /**
+   * Obtiene usuarios registrados dentro de un rango de fechas.
+   * Ambos parámetros startDate y endDate son obligatorios.
+   * Retorna: name, lastname, email, phone, age (calculada), document, typedocument
+   */
+  async getRegisteredUsersByDateRange(
+    startDate: string,
+    endDate: string,
+  ): Promise<
+    Array<{
+      name: string;
+      lastname: string;
+      email: string;
+      phone: string;
+      age: number | null;
+      document: string;
+      typedocument: string;
+      createdAt: Date | undefined;
+    }>
+  > {
+    try {
+      if (!startDate || !endDate) {
+        throw new RpcException({
+          status: 400,
+          message: 'startDate y endDate son obligatorios',
+        });
+      }
+
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new RpcException({
+          status: 400,
+          message: 'Formato de fecha inválido',
+        });
+      }
+
+      // Incluir todo el día final (23:59:59.999)
+      end.setHours(23, 59, 59, 999);
+
+      this.logger.log(
+        `📈 Generando reporte de usuarios registrados desde ${start.toISOString()} hasta ${end.toISOString()}`,
+      );
+
+      const users = await this.userModel
+        .find({
+          createdAt: { $gte: start, $lte: end },
+        })
+        .select(
+          'personalInfo.firstName personalInfo.lastName email contactInfo.phone personalInfo.birthdate personalInfo.documentNumber personalInfo.documentType createdAt',
+        )
+        .exec();
+
+      const calculateAge = (birthdate?: Date): number | null => {
+        if (!birthdate) return null;
+        const today = new Date();
+        let age = today.getFullYear() - birthdate.getFullYear();
+        const m = today.getMonth() - birthdate.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < birthdate.getDate())) {
+          age--;
+        }
+        return age;
+      };
+
+      const result = users.map((u) => ({
+        name: u.personalInfo?.firstName || '',
+        lastname: u.personalInfo?.lastName || '',
+        email: u.email,
+        phone: u.contactInfo?.phone || '',
+        age: calculateAge(u.personalInfo?.birthdate),
+        document: u.personalInfo?.documentNumber || '',
+        typedocument: u.personalInfo?.documentType || '',
+        createdAt: u.createdAt,
+      }));
+
+      this.logger.log(
+        `✅ Reporte generado con ${result.length} usuarios registrados en el rango solicitado`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error generando reporte de usuarios registrados: ${error.message}`,
+        error.stack,
+      );
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 500,
+        message: 'Error interno al generar el reporte de usuarios',
+      });
     }
   }
 }

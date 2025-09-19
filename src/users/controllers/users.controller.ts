@@ -157,4 +157,18 @@ export class UsersController {
   getUsersContactInfo(@Payload() data: { userIds: string[] }) {
     return this.usersService.getUsersContactInfo(data.userIds);
   }
+
+  @MessagePattern({ cmd: 'report.getRegisterUser' })
+  getRegisteredUsersReport(
+    @Payload()
+    data: {
+      startDate: string;
+      endDate: string;
+    },
+  ) {
+    return this.usersService.getRegisteredUsersByDateRange(
+      data.startDate,
+      data.endDate,
+    );
+  }
 }
