@@ -259,41 +259,50 @@ export class UsersService {
   }
 
   /**
-   * Busca posición disponible usando BFS (sin límites)
+   * Busca posición disponible usando DFS en la rama específica del targetPosition
    */
   private async findAvailablePosition(
     startUser: UserDocument,
     targetPosition: Position,
   ): Promise<UserDocument> {
-    const queue: UserDocument[] = [startUser];
+    // Usar DFS para buscar el último nodo disponible en la rama específica
+    return await this.findDeepestAvailablePosition(startUser, targetPosition);
+  }
 
-    while (queue.length > 0) {
-      const currentUser = queue.shift()!;
+  /**
+   * Busca recursivamente el nodo más profundo disponible en la rama específica
+   */
+  private async findDeepestAvailablePosition(
+    currentUser: UserDocument,
+    targetPosition: Position,
+  ): Promise<UserDocument> {
+    // Si la posición objetivo está disponible en el nodo actual, retornarlo
+    if (targetPosition === Position.LEFT && !currentUser.leftChild) {
+      return currentUser;
+    }
+    if (targetPosition === Position.RIGHT && !currentUser.rightChild) {
+      return currentUser;
+    }
 
-      // Si la posición está libre, retornar este usuario
-      if (targetPosition === Position.LEFT && !currentUser.leftChild) {
-        return currentUser;
-      }
-      if (targetPosition === Position.RIGHT && !currentUser.rightChild) {
-        return currentUser;
-      }
-
-      // Agregar hijos a la cola para el siguiente nivel
-      if (currentUser.leftChild) {
-        const leftChild = await this.userModel.findById(currentUser.leftChild);
-        if (leftChild) queue.push(leftChild);
-      }
-
-      if (currentUser.rightChild) {
-        const rightChild = await this.userModel.findById(
-          currentUser.rightChild,
-        );
-        if (rightChild) queue.push(rightChild);
+    // Si la posición objetivo está ocupada, seguir bajando por esa rama
+    if (targetPosition === Position.LEFT && currentUser.leftChild) {
+      const leftChild = await this.userModel.findById(currentUser.leftChild);
+      if (leftChild) {
+        // Recursivamente buscar en la rama izquierda
+        return await this.findDeepestAvailablePosition(leftChild, targetPosition);
       }
     }
 
-    // Si llegamos aquí, retornar el usuario inicial como fallback
-    return startUser;
+    if (targetPosition === Position.RIGHT && currentUser.rightChild) {
+      const rightChild = await this.userModel.findById(currentUser.rightChild);
+      if (rightChild) {
+        // Recursivamente buscar en la rama derecha
+        return await this.findDeepestAvailablePosition(rightChild, targetPosition);
+      }
+    }
+
+    // Si llegamos aquí (no debería pasar), retornar el nodo actual
+    return currentUser;
   }
 
   /**
