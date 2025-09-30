@@ -61,4 +61,9 @@ export class TreeController {
   async checkActiveMembershipsInLeg(@Payload() data: { descendantIds: string[]; referralCode: string }) {
     return await this.treeService.checkActiveMembershipsInLeg(data.descendantIds, data.referralCode);
   }
+
+  @MessagePattern({ cmd: 'user.validation.volumeProcessing' })
+  async getVolumeProcessingValidation(@Payload() data: { userId: string }) {
+    return await this.treeService.getVolumeProcessingValidation(data.userId);
+  }
 }

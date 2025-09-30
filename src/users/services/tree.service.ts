@@ -1050,7 +1050,7 @@ export class TreeService {
       const descendants = await this.userModel.aggregate([
         // Comenzar desde el hijo raíz
         { $match: { _id: new Types.ObjectId(rootChildId) } },
-        
+
         // GraphLookup para obtener todos los descendientes
         {
           $graphLookup: {
@@ -1062,7 +1062,7 @@ export class TreeService {
             maxDepth: 20, // Límite de profundidad para evitar loops infinitos
           }
         },
-        
+
         // Proyectar solo los IDs
         {
           $project: {
@@ -1082,9 +1082,9 @@ export class TreeService {
       }
 
       const descendantIds = descendants[0].descendantIds.map((id: Types.ObjectId) => id.toString());
-      
+
       this.logger.debug(`Encontrados ${descendantIds.length} descendientes en pierna ${side}`);
-      
+
       return descendantIds;
     } catch (error) {
       this.logger.error(`Error obteniendo descendientes en pierna ${side}:`, error);
@@ -1097,7 +1097,7 @@ export class TreeService {
    * Integra con el servicio de membresías
    */
   async checkActiveMembershipsInLeg(
-    descendantIds: string[], 
+    descendantIds: string[],
     referralCode: string
   ): Promise<boolean> {
     try {
@@ -1133,7 +1133,7 @@ export class TreeService {
 
       try {
         const membershipsData = await membershipService.getUsersMembershipBatch(filteredUserIds);
-        
+
         // Verificar si alguna membresía está activa
         const hasActiveMemberships = Object.values(membershipsData).some(
           membershipInfo => membershipInfo?.hasActiveMembership === true
@@ -1148,6 +1148,99 @@ export class TreeService {
     } catch (error) {
       this.logger.error('Error verificando membresías activas en pierna:', error);
       return false;
+    }
+  }
+
+  /**
+   * Obtiene la validación de procesamiento de volumen para usuarios directos
+   * Retorna solo userId, hasMembership y position de los usuarios directos
+   */
+  async getVolumeProcessingValidation(userId: string): Promise<{
+    userId: string;
+    hasMembership: boolean;
+    position: 'LEFT' | 'RIGHT' | null;
+  }[]> {
+    try {
+      this.logger.log(`🔍 Obteniendo validación de volumen para usuario: ${userId}`);
+
+      if (!Types.ObjectId.isValid(userId)) {
+        throw new RpcException({
+          status: 400,
+          message: 'ID de usuario inválido',
+        });
+      }
+
+      // 1. Obtener el referralCode del usuario actual
+      const currentUser = await this.userModel
+        .findById(userId)
+        .select('referralCode')
+        .exec();
+
+      if (!currentUser) {
+        throw new RpcException({
+          status: 404,
+          message: 'Usuario no encontrado',
+        });
+      }
+
+      // 2. Obtener solo usuarios directos activos
+      const directUsers = await this.userModel
+        .find({
+          isActive: true,
+          referrerCode: currentUser.referralCode,
+        })
+        .select('_id position')
+        .exec();
+
+      this.logger.log(
+        `📊 Encontrados ${directUsers.length} usuarios directos activos`,
+      );
+
+      if (directUsers.length === 0) {
+        return [];
+      }
+
+      // 3. Obtener membresías en batch
+      const userIds = directUsers.map((user) => (user._id as Types.ObjectId).toString());
+
+      let membershipsData: Record<string, any> = {};
+      try {
+        membershipsData = await this.membershipService.getUsersMembershipBatch(userIds);
+      } catch (error) {
+        this.logger.warn('Error obteniendo membresías, asumiendo sin membresías:', error);
+      }
+
+      // 4. Construir respuesta simplificada
+      const result = directUsers.map((user) => {
+        const userIdStr = (user._id as Types.ObjectId).toString();
+        const membershipInfo = membershipsData[userIdStr];
+
+        return {
+          userId: userIdStr,
+          hasMembership: membershipInfo?.hasActiveMembership || false,
+          position: user.position || null,
+        };
+      });
+
+      this.logger.log(
+        `✅ Validación completada: ${result.length} usuarios procesados`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error obteniendo validación de procesamiento de volumen:`,
+        error,
+      );
+
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
+      throw new RpcException({
+        status: 500,
+        message: 'Error interno al obtener validación de volumen',
+      });
     }
   }
 }
